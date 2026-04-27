@@ -15,7 +15,7 @@ export function PresetButton({
 }: PresetButtonProps) {
   return (
     <button
-      className={`rounded-2xl border px-4 py-3 text-left transition duration-200 ${
+      className={`w-full rounded-2xl border px-4 py-3 text-left transition duration-200 ${
         active
           ? 'border-accent bg-accent text-white shadow-lg shadow-orange-100'
           : darkMode

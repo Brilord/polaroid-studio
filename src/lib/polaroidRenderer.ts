@@ -180,6 +180,19 @@ function getFrameGeometry(photoSize: number, settings: PolaroidSettings) {
   };
 }
 
+function getCaptionFontFamily(font: string) {
+  switch (font) {
+    case 'typewriter':
+      return '"Courier New", "Courier Prime", monospace';
+    case 'marker':
+      return '"Trebuchet MS", "Segoe Print", cursive';
+    case 'clean':
+      return '"Avenir Next", "Segoe UI", sans-serif';
+    default:
+      return '"Segoe Print", "Bradley Hand", "Comic Sans MS", cursive';
+  }
+}
+
 export function renderPolaroid(
   target: HTMLCanvasElement,
   image: HTMLImageElement,
@@ -238,7 +251,9 @@ export function renderPolaroid(
   if (settings.captionText.trim()) {
     const baseline = photoY + photoSize + bottomBorder * 0.56;
     cardCtx.fillStyle = 'rgba(54, 45, 35, 0.88)';
-    cardCtx.font = `${Math.round(settings.captionFontSize * safeScale)}px "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive`;
+    cardCtx.font = `${Math.round(
+      settings.captionFontSize * safeScale
+    )}px ${getCaptionFontFamily(settings.captionFont)}`;
     cardCtx.textAlign = 'center';
     cardCtx.textBaseline = 'middle';
     cardCtx.fillText(

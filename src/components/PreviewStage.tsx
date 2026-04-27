@@ -1,12 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { PointerEvent, useEffect, useRef, useState } from 'react';
 import { PolaroidSettings } from '../types';
 import { renderPolaroid } from '../lib/polaroidRenderer';
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
 
 type PreviewStageProps = {
   image: HTMLImageElement | null;
   settings: PolaroidSettings;
   ready: boolean;
   error: string | null;
+  applyEffects?: boolean;
+  onCropPreview?: (settings: PolaroidSettings) => void;
+  onCropCommit?: (
+    previous: PolaroidSettings,
+    next: PolaroidSettings
+  ) => void;
   darkMode?: boolean;
 };
 
@@ -15,9 +24,20 @@ export function PreviewStage({
   settings,
   ready,
   error,
+  applyEffects = true,
+  onCropPreview,
+  onCropCommit,
   darkMode = false,
 }: PreviewStageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startSettings: PolaroidSettings;
+    latestSettings: PolaroidSettings;
+  } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     if (!image || !canvasRef.current || !ready) {
@@ -26,9 +46,68 @@ export function PreviewStage({
 
     renderPolaroid(canvasRef.current, image, settings, {
       scale: 0.62,
-      applyEffects: true,
+      applyEffects,
     });
-  }, [image, settings, ready]);
+  }, [image, settings, ready, applyEffects]);
+
+  const beginCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!ready || !image || !canvasRef.current) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startSettings: settings,
+      latestSettings: settings,
+    };
+    setDragging(true);
+  };
+
+  const moveCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!dragRef.current || !canvasRef.current) {
+      return;
+    }
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const deltaX = event.clientX - dragRef.current.startX;
+    const deltaY = event.clientY - dragRef.current.startY;
+    const sensitivity = 260;
+    const nextSettings = {
+      ...dragRef.current.startSettings,
+      cropX: clamp(
+        dragRef.current.startSettings.cropX -
+          (deltaX / Math.max(rect.width, 1)) * sensitivity,
+        -100,
+        100
+      ),
+      cropY: clamp(
+        dragRef.current.startSettings.cropY -
+          (deltaY / Math.max(rect.height, 1)) * sensitivity,
+        -100,
+        100
+      ),
+    };
+
+    dragRef.current.latestSettings = nextSettings;
+    onCropPreview?.(nextSettings);
+  };
+
+  const endCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (!dragRef.current) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture(dragRef.current.pointerId);
+    onCropCommit?.(
+      dragRef.current.startSettings,
+      dragRef.current.latestSettings
+    );
+    dragRef.current = null;
+    setDragging(false);
+  };
 
   return (
     <div
@@ -69,7 +148,14 @@ export function PreviewStage({
       ) : (
         <canvas
           ref={canvasRef}
-          className="relative max-h-full max-w-full animate-floatIn drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)]"
+          className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
+            dragging ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+          title="Drag to reposition the photo crop"
+          onPointerDown={beginCropDrag}
+          onPointerMove={moveCropDrag}
+          onPointerUp={endCropDrag}
+          onPointerCancel={endCropDrag}
         />
       )}
     </div>

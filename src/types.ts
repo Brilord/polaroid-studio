@@ -23,6 +23,7 @@ export type PolaroidSettings = {
   blur: number;
   captionText: string;
   captionFontSize: number;
+  captionFont: string;
 };
 
 export type PolaroidPreset = {
