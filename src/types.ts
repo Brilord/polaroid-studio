@@ -15,6 +15,9 @@ export type PolaroidSettings = {
   cropZoom: number;
   cropX: number;
   cropY: number;
+  cropRotation: number;
+  flipX: boolean;
+  flipY: boolean;
   borderTop: number;
   borderSide: number;
   borderBottom: number;
@@ -24,6 +27,12 @@ export type PolaroidSettings = {
   captionText: string;
   captionFontSize: number;
   captionFont: string;
+  captionColor: string;
+  captionAlign: 'left' | 'center' | 'right';
+  frameTheme: 'white' | 'cream' | 'black' | 'aged' | 'pink' | 'blue' | 'green';
+  overlay: 'none' | 'tape' | 'dust' | 'scratches' | 'fingerprints' | 'lightleak';
+  watermarkText: string;
+  watermarkOpacity: number;
 };
 
 export type PolaroidPreset = {
@@ -38,4 +47,11 @@ export type ExportFormat = 'png' | 'jpg';
 export type ExportSettings = {
   scale: number;
   quality: number;
+};
+
+export type PolaroidProject = {
+  image: ImageAsset | null;
+  settings: PolaroidSettings;
+  activePresetId: string;
+  updatedAt: number;
 };

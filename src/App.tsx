@@ -6,11 +6,12 @@ import { SliderControl } from './components/SliderControl';
 import logoImage from './assets/logo.png';
 import { defaultSettings, presets } from './data/presets';
 import { fileToImageAsset, loadImage } from './lib/image';
-import { exportCanvasBlob } from './lib/polaroidRenderer';
+import { exportCanvasBlob, getExportDimensions } from './lib/polaroidRenderer';
 import {
   ExportFormat,
   ExportSettings,
   ImageAsset,
+  PolaroidProject,
   PolaroidPreset,
   PolaroidSettings,
 } from './types';
@@ -39,6 +40,35 @@ const captionFonts = [
   { id: 'clean', label: 'Clean' },
 ];
 
+const captionColors = ['#362d23', '#1f2937', '#7c2d12', '#14532d', '#f5eee1'];
+
+const frameThemes: { id: PolaroidSettings['frameTheme']; label: string }[] = [
+  { id: 'white', label: 'White' },
+  { id: 'cream', label: 'Cream' },
+  { id: 'black', label: 'Black' },
+  { id: 'aged', label: 'Aged' },
+  { id: 'pink', label: 'Pink' },
+  { id: 'blue', label: 'Blue' },
+  { id: 'green', label: 'Green' },
+];
+
+const overlays: { id: PolaroidSettings['overlay']; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'tape', label: 'Tape' },
+  { id: 'dust', label: 'Dust' },
+  { id: 'scratches', label: 'Scratches' },
+  { id: 'fingerprints', label: 'Fingerprints' },
+  { id: 'lightleak', label: 'Light leak' },
+];
+
+const cleanExportName = (name: string) =>
+  name
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .toLowerCase();
+
 const greatestCommonDivisor = (a: number, b: number): number =>
   b === 0 ? a : greatestCommonDivisor(b, a % b);
 
@@ -50,8 +80,11 @@ function App() {
   const [history, setHistory] = useState<HistoryState>({ past: [], future: [] });
   const [customPresets, setCustomPresets] = useState<PolaroidPreset[]>([]);
   const [recentImages, setRecentImages] = useState<ImageAsset[]>([]);
+  const [batchImages, setBatchImages] = useState<ImageAsset[]>([]);
   const [exportSizeId, setExportSizeId] = useState('print');
-  const [previewEffects, setPreviewEffects] = useState(true);
+  const [previewMode, setPreviewMode] = useState<'final' | 'before' | 'split'>(
+    'final'
+  );
   const [activePresetId, setActivePresetId] = useState<string>('classic');
   const [darkMode, setDarkMode] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -89,6 +122,22 @@ function App() {
         window.localStorage.removeItem('polaroid-studio-recent');
       }
     }
+
+    const storedProject = window.localStorage.getItem('polaroid-studio-project');
+    if (storedProject) {
+      try {
+        const project = JSON.parse(storedProject) as PolaroidProject;
+        setSettings({ ...defaultSettings, ...project.settings });
+        setActivePresetId(project.activePresetId || 'custom');
+        if (project.image) {
+          setImageAsset(project.image);
+          setBatchImages([project.image]);
+          setStatus(`Restored ${project.image.name}`);
+        }
+      } catch {
+        window.localStorage.removeItem('polaroid-studio-project');
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -118,6 +167,16 @@ function App() {
       JSON.stringify(recentImages)
     );
   }, [recentImages]);
+
+  useEffect(() => {
+    const project: PolaroidProject = {
+      image: imageAsset,
+      settings,
+      activePresetId,
+      updatedAt: Date.now(),
+    };
+    window.localStorage.setItem('polaroid-studio-project', JSON.stringify(project));
+  }, [imageAsset, settings, activePresetId]);
 
   useEffect(() => {
     if (!imageAsset) {
@@ -165,6 +224,10 @@ function App() {
   const allPresets = useMemo(
     () => [...presets, ...customPresets],
     [customPresets]
+  );
+  const exportMeta = useMemo(
+    () => getExportDimensions(settings, exportSettings),
+    [settings, exportSettings]
   );
 
   const originalMeta = useMemo(() => {
@@ -415,16 +478,22 @@ function App() {
   );
 
   const importFirstFile = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) {
+    const selectedFiles = Array.from(files ?? []);
+    if (selectedFiles.length === 0) {
       return;
     }
 
     try {
-      const asset = await fileToImageAsset(file);
+      const assets = await Promise.all(selectedFiles.map(fileToImageAsset));
+      const [asset] = assets;
+      setBatchImages(assets);
       setImageAsset(asset);
-      rememberImage(asset);
-      setStatus(`Loaded ${file.name}`);
+      assets.forEach(rememberImage);
+      setStatus(
+        assets.length === 1
+          ? `Loaded ${asset.name}`
+          : `Loaded ${assets.length} photos for batch export.`
+      );
       playSound('shutter');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to import file.');
@@ -433,14 +502,19 @@ function App() {
 
   const openNativePicker = async () => {
     try {
-      const result = await window.electronAPI?.openImage();
-      if (!result) {
+      const results = await window.electronAPI?.openImages();
+      if (!results || results.length === 0) {
         return;
       }
 
-      setImageAsset(result);
-      rememberImage(result);
-      setStatus(`Loaded ${result.name}`);
+      setBatchImages(results);
+      setImageAsset(results[0]);
+      results.forEach(rememberImage);
+      setStatus(
+        results.length === 1
+          ? `Loaded ${results[0].name}`
+          : `Loaded ${results.length} photos for batch export.`
+      );
       setError(null);
       playSound('shutter');
     } catch (err) {
@@ -465,12 +539,7 @@ function App() {
         exportSettings
       );
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-      const cleanName = (imageAsset?.name || 'polaroid')
-        .replace(/\.[^.]+$/, '')
-        .replace(/[^\w\s-]/g, '')
-        .trim()
-        .replace(/\s+/g, '-')
-        .toLowerCase();
+      const cleanName = cleanExportName(imageAsset?.name || 'polaroid');
 
       const result = await window.electronAPI?.saveImage({
         suggestedName: `${cleanName || 'polaroid-studio'}-${Date.now()}.${format}`,
@@ -489,6 +558,154 @@ function App() {
       setStatus('Export failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const renderAssetBytes = async (asset: ImageAsset, format: ExportFormat) => {
+    const image = await loadImage(asset.dataUrl);
+    const blob = await exportCanvasBlob(image, settings, format, exportSettings);
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  };
+
+  const exportBatch = async (format: ExportFormat) => {
+    if (batchImages.length === 0) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setStatus(`Rendering ${batchImages.length} ${format.toUpperCase()} files...`);
+      const files = [];
+      for (let index = 0; index < batchImages.length; index += 1) {
+        const asset = batchImages[index];
+        const data = await renderAssetBytes(asset, format);
+        files.push({
+          suggestedName: `${cleanExportName(asset.name) || 'polaroid'}-${index + 1}.${format}`,
+          data,
+        });
+      }
+
+      const result = await window.electronAPI?.saveImagesToFolder({ files });
+      if (!result || result.canceled) {
+        setStatus('Batch export canceled.');
+      } else {
+        setStatus(`Exported ${files.length} files to ${result.folderPath}`);
+        playSound('success');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Batch export failed.');
+      setStatus('Batch export failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyCurrentImage = async () => {
+    if (!imageElement) {
+      return;
+    }
+
+    try {
+      const blob = await exportCanvasBlob(imageElement, settings, 'png', exportSettings);
+      const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      await window.electronAPI?.copyImage({ data });
+      setStatus('Copied rendered Polaroid to clipboard.');
+      playSound('success');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Copy failed.');
+    }
+  };
+
+  const startDragExport = async () => {
+    if (!imageElement) {
+      return;
+    }
+
+    const blob = await exportCanvasBlob(imageElement, settings, 'png', exportSettings);
+    const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    await window.electronAPI?.startImageDrag({
+      suggestedName: `${cleanExportName(imageAsset?.name || 'polaroid') || 'polaroid'}-drag.png`,
+      data,
+    });
+  };
+
+  const randomizeLook = () => {
+    commitSettings((current) => ({
+      ...current,
+      warmth: Math.round(8 + Math.random() * 34),
+      fade: Math.round(8 + Math.random() * 34),
+      grain: Math.round(4 + Math.random() * 22),
+      vignette: Math.round(6 + Math.random() * 25),
+      rotation: Math.round((Math.random() * 12 - 6) * 10) / 10,
+      shadowIntensity: Math.round(40 + Math.random() * 42),
+      overlay: overlays[Math.floor(Math.random() * overlays.length)].id,
+    }));
+    setStatus('Randomized the analog look.');
+    playSound('click');
+  };
+
+  const resetCrop = () => {
+    commitSettings((current) => ({
+      ...current,
+      cropZoom: 1,
+      cropX: 0,
+      cropY: 0,
+      cropRotation: 0,
+      flipX: false,
+      flipY: false,
+    }));
+  };
+
+  const fitCrop = () => updateSetting('cropZoom', 1);
+  const fillCrop = () => updateSetting('cropZoom', 1.6);
+
+  const exportPresetFile = async () => {
+    const json = JSON.stringify(
+      {
+        version: 1,
+        presets: customPresets.length > 0 ? customPresets : [
+          {
+            id: `custom-${Date.now()}`,
+            name: 'Current Look',
+            description: 'Exported current Polaroid Studio look.',
+            settings,
+          },
+        ],
+      },
+      null,
+      2
+    );
+    const result = await window.electronAPI?.savePresetFile({
+      suggestedName: 'polaroid-studio-presets.json',
+      json,
+    });
+    if (result && !result.canceled) {
+      setStatus(`Exported presets to ${result.filePath}`);
+    }
+  };
+
+  const importPresetFile = async () => {
+    try {
+      const json = await window.electronAPI?.openPresetFile();
+      if (!json) {
+        return;
+      }
+      const parsed = JSON.parse(json) as { presets?: PolaroidPreset[] };
+      const incoming = (parsed.presets ?? []).filter(
+        (preset) => preset.name && preset.settings
+      );
+      setCustomPresets((current) => [
+        ...current,
+        ...incoming.map((preset) => ({
+          ...preset,
+          id: preset.id.startsWith('custom-')
+            ? `${preset.id}-${Date.now()}`
+            : `custom-${preset.id}-${Date.now()}`,
+        })),
+      ]);
+      setStatus(`Imported ${incoming.length} presets.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Preset import failed.');
     }
   };
 
@@ -629,11 +846,32 @@ function App() {
             </p>
           </div>
 
-          <Dropzone
-            onSelectFiles={importFirstFile}
-            onOpenNativeDialog={openNativePicker}
-            darkMode={darkMode}
-          />
+            <Dropzone
+              onSelectFiles={importFirstFile}
+              onOpenNativeDialog={openNativePicker}
+              darkMode={darkMode}
+            />
+
+          {batchImages.length > 1 ? (
+            <div className={`rounded-[26px] border p-4 ${surfaceClass}`}>
+              <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
+                Batch queue: {batchImages.length} photos
+              </div>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {batchImages.slice(0, 8).map((asset) => (
+                  <button
+                    key={`${asset.name}-${asset.dataUrl.slice(0, 20)}`}
+                    className={`overflow-hidden rounded-xl border ${imageAsset?.dataUrl === asset.dataUrl ? 'border-accent' : darkMode ? 'border-stone-700' : 'border-stone-200'}`}
+                    type="button"
+                    onClick={() => setImageAsset(asset)}
+                    title={asset.name}
+                  >
+                    <img className="h-14 w-full object-cover" src={asset.dataUrl} alt="" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {imageAsset ? (
             <div className={`rounded-[26px] border p-4 ${darkMode ? 'border-stone-800 bg-stone-900/72' : 'border-stone-200 bg-stone-50/70'}`}>
@@ -700,6 +938,54 @@ function App() {
               onChange={(value) => updateSetting('cropY', value)}
               darkMode={darkMode}
             />
+            <SliderControl
+              label="Crop rotation"
+              value={settings.cropRotation}
+              min={-45}
+              max={45}
+              onChange={(value) => updateSetting('cropRotation', value)}
+              suffix="deg"
+              darkMode={darkMode}
+            />
+            <label className="space-y-2">
+              <div className={`flex items-center justify-between text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>
+                <span>Numeric zoom</span>
+                <span className={mutedTextClass}>{settings.cropZoom.toFixed(2)}x</span>
+              </div>
+              <input
+                className={`w-full rounded-2xl border px-3 py-2 text-sm outline-none ${fieldClass}`}
+                type="number"
+                min={1}
+                max={3}
+                step={0.05}
+                value={settings.cropZoom}
+                onChange={(event) => updateSetting('cropZoom', Number(event.target.value))}
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ['Fit', fitCrop],
+                ['Fill', fillCrop],
+                ['Flip H', () => updateSetting('flipX', !settings.flipX)],
+                ['Flip V', () => updateSetting('flipY', !settings.flipY)],
+              ].map(([label, handler]) => (
+                <button
+                  key={label as string}
+                  className={`rounded-2xl border px-3 py-2 text-sm transition ${darkMode ? 'border-stone-700 text-stone-300 hover:bg-stone-800' : 'border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+                  type="button"
+                  onClick={handler as () => void}
+                >
+                  {label as string}
+                </button>
+              ))}
+            </div>
+            <button
+              className={`w-full rounded-2xl border px-3 py-2 text-sm transition ${darkMode ? 'border-stone-700 text-stone-300 hover:bg-stone-800' : 'border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+              type="button"
+              onClick={resetCrop}
+            >
+              Reset crop
+            </button>
           </div>
 
           <div className={`space-y-5 rounded-[28px] border p-4 ${surfaceClass}`}>
@@ -767,6 +1053,45 @@ function App() {
               onChange={(value) => updateSetting('vignette', value)}
               darkMode={darkMode}
             />
+            <div className="space-y-2">
+              <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Frame theme</div>
+              <div className="grid grid-cols-2 gap-2">
+                {frameThemes.map((theme) => (
+                  <button
+                    key={theme.id}
+                    className={`rounded-2xl border px-3 py-2 text-sm transition ${
+                      settings.frameTheme === theme.id
+                        ? darkMode
+                          ? 'border-accent bg-accent/15 text-orange-200'
+                          : 'border-accent bg-accentSoft text-accent'
+                        : darkMode
+                          ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                          : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    onClick={() => updateSetting('frameTheme', theme.id)}
+                  >
+                    {theme.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="block space-y-2">
+              <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Overlay</span>
+              <select
+                className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
+                value={settings.overlay}
+                onChange={(event) =>
+                  updateSetting('overlay', event.target.value as PolaroidSettings['overlay'])
+                }
+              >
+                {overlays.map((overlay) => (
+                  <option key={overlay.id} value={overlay.id}>
+                    {overlay.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <SliderControl
               label="Top border"
               value={settings.borderTop}
@@ -842,28 +1167,33 @@ function App() {
                 Redo
               </button>
             </div>
-            <button
-              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-                previewEffects
-                  ? darkMode
-                    ? 'border-accent bg-accent/15 text-orange-200'
-                    : 'border-accent bg-accentSoft text-accent'
-                  : darkMode
-                    ? 'border-stone-700 text-stone-200 hover:bg-stone-900'
-                    : 'border-stone-300 text-stone-700 hover:bg-stone-50'
-              }`}
-              type="button"
-              onClick={() => setPreviewEffects((current) => !current)}
-            >
-              {previewEffects ? 'Showing final' : 'Showing before'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {(['final', 'before', 'split'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`rounded-full border px-4 py-2 text-sm font-medium capitalize transition ${
+                    previewMode === mode
+                      ? darkMode
+                        ? 'border-accent bg-accent/15 text-orange-200'
+                        : 'border-accent bg-accentSoft text-accent'
+                      : darkMode
+                        ? 'border-stone-700 text-stone-200 hover:bg-stone-900'
+                        : 'border-stone-300 text-stone-700 hover:bg-stone-50'
+                  }`}
+                  type="button"
+                  onClick={() => setPreviewMode(mode)}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
           <PreviewStage
             image={imageElement}
             settings={settings}
             ready={hasImage}
             error={error}
-            applyEffects={previewEffects}
+            previewMode={previewMode}
             onCropPreview={previewCropDrag}
             onCropCommit={commitCropDrag}
             darkMode={darkMode}
@@ -889,6 +1219,39 @@ function App() {
                     onClick={saveCustomPreset}
                   >
                     Save preset
+                  </button>
+                  <button
+                    className={`rounded-full border px-4 py-2 text-sm transition ${
+                      darkMode
+                        ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                        : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    onClick={importPresetFile}
+                  >
+                    Import
+                  </button>
+                  <button
+                    className={`rounded-full border px-4 py-2 text-sm transition ${
+                      darkMode
+                        ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                        : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    onClick={exportPresetFile}
+                  >
+                    Export
+                  </button>
+                  <button
+                    className={`rounded-full border px-4 py-2 text-sm transition ${
+                      darkMode
+                        ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                        : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    onClick={randomizeLook}
+                  >
+                    Randomize
                   </button>
                   <button
                     className={`rounded-full border px-4 py-2 text-sm transition ${
@@ -966,6 +1329,78 @@ function App() {
                     ))}
                   </select>
                 </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm transition ${darkMode ? 'border-stone-700 text-stone-300 hover:bg-stone-900' : 'border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+                    type="button"
+                    onClick={() =>
+                      updateSetting(
+                        'captionText',
+                        new Intl.DateTimeFormat(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        }).format(new Date())
+                      )
+                    }
+                  >
+                    Insert date
+                  </button>
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm transition ${darkMode ? 'border-stone-700 text-stone-300 hover:bg-stone-900' : 'border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+                    type="button"
+                    onClick={() => {
+                      const location = window.prompt('Location stamp');
+                      if (location?.trim()) {
+                        updateSetting('captionText', location.trim());
+                      }
+                    }}
+                  >
+                    Location stamp
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Caption color</div>
+                  <div className="flex flex-wrap gap-2">
+                    {captionColors.map((color) => (
+                      <button
+                        key={color}
+                        className={`h-9 w-9 rounded-full border-2 ${settings.captionColor === color ? 'border-accent' : darkMode ? 'border-stone-700' : 'border-stone-200'}`}
+                        style={{ backgroundColor: color }}
+                        type="button"
+                        title={color}
+                        onClick={() => updateSetting('captionColor', color)}
+                      />
+                    ))}
+                    <input
+                      className="h-9 w-12 rounded-lg border border-stone-300 bg-transparent"
+                      type="color"
+                      value={settings.captionColor}
+                      onChange={(event) => updateSetting('captionColor', event.target.value)}
+                      title="Custom caption color"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['left', 'center', 'right'] as const).map((align) => (
+                    <button
+                      key={align}
+                      className={`rounded-2xl border px-3 py-2 text-sm capitalize transition ${
+                        settings.captionAlign === align
+                          ? darkMode
+                            ? 'border-accent bg-accent/15 text-orange-200'
+                            : 'border-accent bg-accentSoft text-accent'
+                          : darkMode
+                            ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                            : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                      }`}
+                      type="button"
+                      onClick={() => updateSetting('captionAlign', align)}
+                    >
+                      {align}
+                    </button>
+                  ))}
+                </div>
                 <SliderControl
                   label="Caption size"
                   value={settings.captionFontSize}
@@ -983,6 +1418,24 @@ function App() {
                   step={0.1}
                   onChange={(value) => updateSetting('blur', value)}
                   suffix="px"
+                  darkMode={darkMode}
+                />
+                <label className="block space-y-2">
+                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Watermark / signature</span>
+                  <input
+                    className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
+                    value={settings.watermarkText}
+                    onChange={(event) => updateSetting('watermarkText', event.target.value)}
+                    placeholder="Optional signature"
+                  />
+                </label>
+                <SliderControl
+                  label="Watermark opacity"
+                  value={settings.watermarkOpacity}
+                  min={0}
+                  max={100}
+                  onChange={(value) => updateSetting('watermarkOpacity', value)}
+                  suffix="%"
                   darkMode={darkMode}
                 />
                 <div className="space-y-2">
@@ -1008,6 +1461,9 @@ function App() {
                     ))}
                   </div>
                 </div>
+                <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
+                  Export preview: {exportMeta.width} x {exportMeta.height}px
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-400 ${
@@ -1030,6 +1486,59 @@ function App() {
                     type="button"
                   >
                     Export JPG
+                  </button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      darkMode
+                        ? 'border-stone-700 bg-stone-900 text-stone-100 hover:border-stone-500 hover:bg-stone-800'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-400 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    disabled={!hasImage || busy}
+                    onClick={copyCurrentImage}
+                  >
+                    Copy PNG
+                  </button>
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      darkMode
+                        ? 'border-stone-700 bg-stone-900 text-stone-100 hover:border-stone-500 hover:bg-stone-800'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-400 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    draggable={hasImage}
+                    disabled={!hasImage || busy}
+                    onDragStart={() => void startDragExport()}
+                  >
+                    Drag PNG out
+                  </button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      darkMode
+                        ? 'border-stone-700 bg-stone-900 text-stone-100 hover:border-stone-500 hover:bg-stone-800'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-400 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    disabled={batchImages.length === 0 || busy}
+                    onClick={() => exportBatch('png')}
+                  >
+                    Batch PNG
+                  </button>
+                  <button
+                    className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      darkMode
+                        ? 'border-stone-700 bg-stone-900 text-stone-100 hover:border-stone-500 hover:bg-stone-800'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-400 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    disabled={batchImages.length === 0 || busy}
+                    onClick={() => exportBatch('jpg')}
+                  >
+                    Batch JPG
                   </button>
                 </div>
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>

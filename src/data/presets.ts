@@ -11,6 +11,9 @@ export const defaultSettings: PolaroidSettings = {
   cropZoom: 1,
   cropX: 0,
   cropY: 0,
+  cropRotation: 0,
+  flipX: false,
+  flipY: false,
   borderTop: 9,
   borderSide: 10,
   borderBottom: 24,
@@ -20,6 +23,12 @@ export const defaultSettings: PolaroidSettings = {
   captionText: '',
   captionFontSize: 26,
   captionFont: 'handwritten',
+  captionColor: '#362d23',
+  captionAlign: 'center',
+  frameTheme: 'white',
+  overlay: 'none',
+  watermarkText: '',
+  watermarkOpacity: 32,
 };
 
 export const presets: PolaroidPreset[] = [

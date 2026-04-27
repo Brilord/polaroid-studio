@@ -32,10 +32,10 @@ export function Dropzone({
         +
       </div>
       <h3 className={`mt-4 text-lg font-semibold ${darkMode ? 'text-white' : 'text-ink'}`}>
-        Drag in an image
+        Drag in images
       </h3>
       <p className={`mt-1 text-sm ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
-        PNG, JPG, JPEG, and WEBP files are supported.
+        PNG, JPG, JPEG, and WEBP files are supported. Multiple files export as a batch.
       </p>
 
       <div className="mt-5 flex flex-wrap justify-center gap-3">
@@ -46,7 +46,7 @@ export function Dropzone({
           onClick={() => inputRef.current?.click()}
           type="button"
         >
-          Choose File
+          Choose Files
         </button>
         <button
           className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
@@ -66,6 +66,7 @@ export function Dropzone({
         className="hidden"
         type="file"
         accept="image/png,image/jpeg,image/jpg,image/webp"
+        multiple
         onChange={(event) => onSelectFiles(event.target.files)}
       />
     </div>

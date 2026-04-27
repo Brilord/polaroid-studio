@@ -10,7 +10,7 @@ type PreviewStageProps = {
   settings: PolaroidSettings;
   ready: boolean;
   error: string | null;
-  applyEffects?: boolean;
+  previewMode?: 'final' | 'before' | 'split';
   onCropPreview?: (settings: PolaroidSettings) => void;
   onCropCommit?: (
     previous: PolaroidSettings,
@@ -24,12 +24,13 @@ export function PreviewStage({
   settings,
   ready,
   error,
-  applyEffects = true,
+  previewMode = 'final',
   onCropPreview,
   onCropCommit,
   darkMode = false,
 }: PreviewStageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const beforeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -38,6 +39,8 @@ export function PreviewStage({
     latestSettings: PolaroidSettings;
   } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [split, setSplit] = useState(50);
+  const [splitting, setSplitting] = useState(false);
 
   useEffect(() => {
     if (!image || !canvasRef.current || !ready) {
@@ -46,12 +49,19 @@ export function PreviewStage({
 
     renderPolaroid(canvasRef.current, image, settings, {
       scale: 0.62,
-      applyEffects,
+      applyEffects: previewMode !== 'before',
     });
-  }, [image, settings, ready, applyEffects]);
+
+    if (beforeCanvasRef.current) {
+      renderPolaroid(beforeCanvasRef.current, image, settings, {
+        scale: 0.62,
+        applyEffects: false,
+      });
+    }
+  }, [image, settings, ready, previewMode]);
 
   const beginCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (!ready || !image || !canvasRef.current) {
+    if (!ready || !image || !canvasRef.current || splitting) {
       return;
     }
 
@@ -109,6 +119,15 @@ export function PreviewStage({
     setDragging(false);
   };
 
+  const moveSplit = (event: PointerEvent<HTMLDivElement>) => {
+    if (!splitting) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSplit(clamp(((event.clientX - rect.left) / Math.max(rect.width, 1)) * 100, 8, 92));
+  };
+
   return (
     <div
       className={`relative flex h-full min-h-[520px] items-center justify-center overflow-hidden rounded-[34px] border p-8 shadow-panel ${
@@ -146,17 +165,52 @@ export function PreviewStage({
           {error}
         </div>
       ) : (
-        <canvas
-          ref={canvasRef}
-          className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
-            dragging ? 'cursor-grabbing' : 'cursor-grab'
-          }`}
-          title="Drag to reposition the photo crop"
-          onPointerDown={beginCropDrag}
-          onPointerMove={moveCropDrag}
-          onPointerUp={endCropDrag}
-          onPointerCancel={endCropDrag}
-        />
+        <div
+          className="relative flex max-h-full max-w-full items-center justify-center"
+          onPointerMove={moveSplit}
+          onPointerUp={() => setSplitting(false)}
+          onPointerCancel={() => setSplitting(false)}
+        >
+          {previewMode === 'split' ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+              style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}
+            >
+              <canvas
+                ref={beforeCanvasRef}
+                className="max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)]"
+              />
+            </div>
+          ) : (
+            <canvas ref={beforeCanvasRef} className="hidden" />
+          )}
+          {previewMode === 'split' ? (
+            <div
+              className="absolute bottom-6 top-6 z-20 w-1 cursor-ew-resize rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.16),0_8px_20px_rgba(0,0,0,0.2)]"
+              style={{ left: `${split}%` }}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setSplitting(true);
+              }}
+              title="Drag to compare before and after"
+            >
+              <div className="absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border border-stone-200 bg-white text-center text-xs font-semibold leading-9 text-stone-600 shadow-md">
+                ||
+              </div>
+            </div>
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
+              dragging ? 'cursor-grabbing' : 'cursor-grab'
+            }`}
+            title="Drag to reposition the photo crop"
+            onPointerDown={beginCropDrag}
+            onPointerMove={moveCropDrag}
+            onPointerUp={endCropDrag}
+            onPointerCancel={endCropDrag}
+          />
+        </div>
       )}
     </div>
   );
