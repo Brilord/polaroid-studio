@@ -202,6 +202,28 @@ function getFrameGeometry(photoSize: number, settings: PolaroidSettings) {
   };
 }
 
+export function getAutoCropZoom(
+  image: HTMLImageElement,
+  settings: PolaroidSettings
+) {
+  const photoSize = 820;
+  const coverScale = Math.max(
+    photoSize / image.naturalWidth,
+    photoSize / image.naturalHeight
+  );
+  const baseDrawWidth = image.naturalWidth * coverScale;
+  const baseDrawHeight = image.naturalHeight * coverScale;
+  const angle = (settings.cropRotation * Math.PI) / 180;
+  const rotatedSquareSpan = photoSize * (Math.abs(Math.cos(angle)) + Math.abs(Math.sin(angle)));
+  const neededZoom = Math.max(
+    1,
+    rotatedSquareSpan / baseDrawWidth,
+    rotatedSquareSpan / baseDrawHeight
+  );
+
+  return clamp(Math.ceil(neededZoom * 100) / 100, 1, 3);
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   photoX: number,

@@ -19,6 +19,8 @@ type PreviewStageProps = {
   darkMode?: boolean;
 };
 
+type CropDragMode = 'move' | 'resize';
+
 export function PreviewStage({
   image,
   settings,
@@ -33,8 +35,10 @@ export function PreviewStage({
   const beforeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<{
     pointerId: number;
+    mode: CropDragMode;
     startX: number;
     startY: number;
+    startDistance: number;
     startSettings: PolaroidSettings;
     latestSettings: PolaroidSettings;
   } | null>(null);
@@ -60,57 +64,110 @@ export function PreviewStage({
     }
   }, [image, settings, ready, previewMode]);
 
+  const getPointerDistanceFromCenter = (
+    event: PointerEvent<HTMLElement>,
+    rect: DOMRect
+  ) => {
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    return Math.hypot(event.clientX - centerX, event.clientY - centerY);
+  };
+
   const beginCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
     if (!ready || !image || !canvasRef.current || splitting) {
       return;
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
+    const rect = canvasRef.current.getBoundingClientRect();
     dragRef.current = {
       pointerId: event.pointerId,
+      mode: 'move',
       startX: event.clientX,
       startY: event.clientY,
+      startDistance: getPointerDistanceFromCenter(event, rect),
       startSettings: settings,
       latestSettings: settings,
     };
     setDragging(true);
   };
 
-  const moveCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
+  const beginResizeDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!ready || !image || !canvasRef.current || splitting) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const rect = canvasRef.current.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      mode: 'resize',
+      startX: event.clientX,
+      startY: event.clientY,
+      startDistance: getPointerDistanceFromCenter(event, rect),
+      startSettings: settings,
+      latestSettings: settings,
+    };
+    setDragging(true);
+  };
+
+  const moveCropDrag = (event: PointerEvent<HTMLElement>) => {
     if (!dragRef.current || !canvasRef.current) {
       return;
     }
 
     const rect = canvasRef.current.getBoundingClientRect();
-    const deltaX = event.clientX - dragRef.current.startX;
-    const deltaY = event.clientY - dragRef.current.startY;
-    const sensitivity = 260;
-    const nextSettings = {
-      ...dragRef.current.startSettings,
-      cropX: clamp(
-        dragRef.current.startSettings.cropX -
-          (deltaX / Math.max(rect.width, 1)) * sensitivity,
-        -100,
-        100
-      ),
-      cropY: clamp(
-        dragRef.current.startSettings.cropY -
-          (deltaY / Math.max(rect.height, 1)) * sensitivity,
-        -100,
-        100
-      ),
-    };
+    let nextSettings: PolaroidSettings;
+
+    if (dragRef.current.mode === 'resize') {
+      const distance = getPointerDistanceFromCenter(event, rect);
+      const zoomDelta =
+        ((distance - dragRef.current.startDistance) /
+          Math.max(Math.min(rect.width, rect.height), 1)) *
+        2.6;
+      nextSettings = {
+        ...dragRef.current.startSettings,
+        cropZoom: clamp(
+          dragRef.current.startSettings.cropZoom + zoomDelta,
+          1,
+          3
+        ),
+      };
+    } else {
+      const deltaX = event.clientX - dragRef.current.startX;
+      const deltaY = event.clientY - dragRef.current.startY;
+      const sensitivity = 260;
+      nextSettings = {
+        ...dragRef.current.startSettings,
+        cropX: clamp(
+          dragRef.current.startSettings.cropX -
+            (deltaX / Math.max(rect.width, 1)) * sensitivity,
+          -100,
+          100
+        ),
+        cropY: clamp(
+          dragRef.current.startSettings.cropY -
+            (deltaY / Math.max(rect.height, 1)) * sensitivity,
+          -100,
+          100
+        ),
+      };
+    }
 
     dragRef.current.latestSettings = nextSettings;
     onCropPreview?.(nextSettings);
   };
 
-  const endCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
+  const endCropDrag = (event: PointerEvent<HTMLElement>) => {
     if (!dragRef.current) {
       return;
     }
 
-    event.currentTarget.releasePointerCapture(dragRef.current.pointerId);
+    if (event.currentTarget.hasPointerCapture(dragRef.current.pointerId)) {
+      event.currentTarget.releasePointerCapture(dragRef.current.pointerId);
+    }
     onCropCommit?.(
       dragRef.current.startSettings,
       dragRef.current.latestSettings
@@ -199,17 +256,38 @@ export function PreviewStage({
               </div>
             </div>
           ) : null}
-          <canvas
-            ref={canvasRef}
-            className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
-              dragging ? 'cursor-grabbing' : 'cursor-grab'
-            }`}
-            title="Drag to reposition the photo crop"
-            onPointerDown={beginCropDrag}
-            onPointerMove={moveCropDrag}
-            onPointerUp={endCropDrag}
-            onPointerCancel={endCropDrag}
-          />
+          <div className="relative max-h-full max-w-full">
+            <canvas
+              ref={canvasRef}
+              className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
+                dragging ? 'cursor-grabbing' : 'cursor-grab'
+              }`}
+              title="Drag to reposition the photo crop"
+              onPointerDown={beginCropDrag}
+              onPointerMove={moveCropDrag}
+              onPointerUp={endCropDrag}
+              onPointerCancel={endCropDrag}
+            />
+            {(['left-4 top-4 cursor-nwse-resize', 'right-4 top-4 cursor-nesw-resize', 'bottom-4 left-4 cursor-nesw-resize', 'bottom-4 right-4 cursor-nwse-resize'] as const).map(
+              (position) => (
+                <button
+                  key={position}
+                  aria-label="Resize photo crop"
+                  className={`absolute z-30 h-5 w-5 rounded-full border-2 shadow-md transition ${
+                    darkMode
+                      ? 'border-stone-950 bg-orange-300 hover:bg-orange-200'
+                      : 'border-white bg-accent hover:bg-orange-500'
+                  } ${position}`}
+                  title="Drag to resize the photo"
+                  type="button"
+                  onPointerDown={beginResizeDrag}
+                  onPointerMove={moveCropDrag}
+                  onPointerUp={endCropDrag}
+                  onPointerCancel={endCropDrag}
+                />
+              )
+            )}
+          </div>
         </div>
       )}
     </div>

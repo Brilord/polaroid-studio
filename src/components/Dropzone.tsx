@@ -4,12 +4,25 @@ type DropzoneProps = {
   onSelectFiles: (files: FileList | null) => void;
   onOpenNativeDialog: () => void;
   darkMode?: boolean;
+  copy?: {
+    title: string;
+    description: string;
+    chooseFiles: string;
+    nativePicker: string;
+  };
 };
 
 export function Dropzone({
   onSelectFiles,
   onOpenNativeDialog,
   darkMode = false,
+  copy = {
+    title: 'Drag in images',
+    description:
+      'PNG, JPG, JPEG, and WEBP files are supported. Multiple files export as a batch.',
+    chooseFiles: 'Choose Files',
+    nativePicker: 'Native Picker',
+  },
 }: DropzoneProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -32,10 +45,10 @@ export function Dropzone({
         +
       </div>
       <h3 className={`mt-4 text-lg font-semibold ${darkMode ? 'text-white' : 'text-ink'}`}>
-        Drag in images
+        {copy.title}
       </h3>
       <p className={`mt-1 text-sm ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
-        PNG, JPG, JPEG, and WEBP files are supported. Multiple files export as a batch.
+        {copy.description}
       </p>
 
       <div className="mt-5 flex flex-wrap justify-center gap-3">
@@ -46,7 +59,7 @@ export function Dropzone({
           onClick={() => inputRef.current?.click()}
           type="button"
         >
-          Choose Files
+          {copy.chooseFiles}
         </button>
         <button
           className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
@@ -57,7 +70,7 @@ export function Dropzone({
           onClick={onOpenNativeDialog}
           type="button"
         >
-          Native Picker
+          {copy.nativePicker}
         </button>
       </div>
 

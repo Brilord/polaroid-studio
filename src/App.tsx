@@ -6,7 +6,11 @@ import { SliderControl } from './components/SliderControl';
 import logoImage from './assets/logo.png';
 import { defaultSettings, presets } from './data/presets';
 import { fileToImageAsset, loadImage } from './lib/image';
-import { exportCanvasBlob, getExportDimensions } from './lib/polaroidRenderer';
+import {
+  exportCanvasBlob,
+  getAutoCropZoom,
+  getExportDimensions,
+} from './lib/polaroidRenderer';
 import {
   ExportFormat,
   ExportSettings,
@@ -15,6 +19,7 @@ import {
   PolaroidPreset,
   PolaroidSettings,
 } from './types';
+import { translations, type Language } from './i18n';
 
 type HistoryState = {
   past: PolaroidSettings[];
@@ -88,9 +93,11 @@ function App() {
   const [activePresetId, setActivePresetId] = useState<string>('classic');
   const [darkMode, setDarkMode] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [language, setLanguage] = useState<Language>('en');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('Import a photo to begin.');
+  const t = translations[language];
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem('polaroid-studio-theme');
@@ -101,6 +108,14 @@ function App() {
     const storedSound = window.localStorage.getItem('polaroid-studio-sound');
     if (storedSound === 'off') {
       setSoundEnabled(false);
+    }
+
+    const storedLanguage = window.localStorage.getItem('polaroid-studio-language');
+    if (storedLanguage === 'ko' || storedLanguage === 'en') {
+      setLanguage(storedLanguage);
+      setStatus(
+        storedLanguage === 'ko' ? '시작하려면 사진을 가져오세요.' : 'Import a photo to begin.'
+      );
     }
 
     const storedPresets = window.localStorage.getItem(
@@ -153,6 +168,11 @@ function App() {
       soundEnabled ? 'on' : 'off'
     );
   }, [soundEnabled]);
+
+  useEffect(() => {
+    window.localStorage.setItem('polaroid-studio-language', language);
+    document.documentElement.lang = language === 'ko' ? 'ko' : 'en';
+  }, [language]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -222,8 +242,14 @@ function App() {
     [exportSizeId]
   );
   const allPresets = useMemo(
-    () => [...presets, ...customPresets],
-    [customPresets]
+    () =>
+      [...presets, ...customPresets].map((preset) => ({
+        ...preset,
+        ...(preset.id in t.presetCopy
+          ? t.presetCopy[preset.id as keyof typeof t.presetCopy]
+          : {}),
+      })),
+    [customPresets, t.presetCopy]
   );
   const exportMeta = useMemo(
     () => getExportDimensions(settings, exportSettings),
@@ -460,7 +486,9 @@ function App() {
   const commitCropDrag = useCallback(
     (previous: PolaroidSettings, next: PolaroidSettings) => {
       const cropChanged =
-        previous.cropX !== next.cropX || previous.cropY !== next.cropY;
+        previous.cropX !== next.cropX ||
+        previous.cropY !== next.cropY ||
+        previous.cropZoom !== next.cropZoom;
 
       if (!cropChanged) {
         setSettings(previous);
@@ -491,8 +519,12 @@ function App() {
       assets.forEach(rememberImage);
       setStatus(
         assets.length === 1
-          ? `Loaded ${asset.name}`
-          : `Loaded ${assets.length} photos for batch export.`
+          ? language === 'ko'
+            ? `${asset.name} 불러옴`
+            : `Loaded ${asset.name}`
+          : language === 'ko'
+            ? `일괄 내보내기용 사진 ${assets.length}장을 불러왔습니다.`
+            : `Loaded ${assets.length} photos for batch export.`
       );
       playSound('shutter');
     } catch (err) {
@@ -512,8 +544,12 @@ function App() {
       results.forEach(rememberImage);
       setStatus(
         results.length === 1
-          ? `Loaded ${results[0].name}`
-          : `Loaded ${results.length} photos for batch export.`
+          ? language === 'ko'
+            ? `${results[0].name} 불러옴`
+            : `Loaded ${results[0].name}`
+          : language === 'ko'
+            ? `일괄 내보내기용 사진 ${results.length}장을 불러왔습니다.`
+            : `Loaded ${results.length} photos for batch export.`
       );
       setError(null);
       playSound('shutter');
@@ -531,7 +567,11 @@ function App() {
 
     try {
       setBusy(true);
-      setStatus(`Rendering ${format.toUpperCase()} export...`);
+      setStatus(
+        language === 'ko'
+          ? `${format.toUpperCase()} 내보내기를 렌더링 중...`
+          : `Rendering ${format.toUpperCase()} export...`
+      );
       const blob = await exportCanvasBlob(
         imageElement,
         settings,
@@ -548,14 +588,16 @@ function App() {
       });
 
       if (!result || result.canceled) {
-        setStatus('Export canceled.');
+        setStatus(language === 'ko' ? '내보내기가 취소되었습니다.' : 'Export canceled.');
       } else {
-        setStatus(`Saved to ${result.filePath}`);
+        setStatus(
+          language === 'ko' ? `${result.filePath}에 저장됨` : `Saved to ${result.filePath}`
+        );
         playSound('success');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed.');
-      setStatus('Export failed.');
+      setStatus(language === 'ko' ? '내보내기에 실패했습니다.' : 'Export failed.');
     } finally {
       setBusy(false);
     }
@@ -574,7 +616,11 @@ function App() {
 
     try {
       setBusy(true);
-      setStatus(`Rendering ${batchImages.length} ${format.toUpperCase()} files...`);
+      setStatus(
+        language === 'ko'
+          ? `${format.toUpperCase()} 파일 ${batchImages.length}개를 렌더링 중...`
+          : `Rendering ${batchImages.length} ${format.toUpperCase()} files...`
+      );
       const files = [];
       for (let index = 0; index < batchImages.length; index += 1) {
         const asset = batchImages[index];
@@ -587,14 +633,20 @@ function App() {
 
       const result = await window.electronAPI?.saveImagesToFolder({ files });
       if (!result || result.canceled) {
-        setStatus('Batch export canceled.');
+        setStatus(
+          language === 'ko' ? '일괄 내보내기가 취소되었습니다.' : 'Batch export canceled.'
+        );
       } else {
-        setStatus(`Exported ${files.length} files to ${result.folderPath}`);
+        setStatus(
+          language === 'ko'
+            ? `${files.length}개 파일을 ${result.folderPath}에 내보냈습니다.`
+            : `Exported ${files.length} files to ${result.folderPath}`
+        );
         playSound('success');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Batch export failed.');
-      setStatus('Batch export failed.');
+      setStatus(language === 'ko' ? '일괄 내보내기에 실패했습니다.' : 'Batch export failed.');
     } finally {
       setBusy(false);
     }
@@ -609,7 +661,11 @@ function App() {
       const blob = await exportCanvasBlob(imageElement, settings, 'png', exportSettings);
       const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
       await window.electronAPI?.copyImage({ data });
-      setStatus('Copied rendered Polaroid to clipboard.');
+      setStatus(
+        language === 'ko'
+          ? '렌더링된 폴라로이드를 클립보드에 복사했습니다.'
+          : 'Copied rendered Polaroid to clipboard.'
+      );
       playSound('success');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Copy failed.');
@@ -640,7 +696,7 @@ function App() {
       shadowIntensity: Math.round(40 + Math.random() * 42),
       overlay: overlays[Math.floor(Math.random() * overlays.length)].id,
     }));
-    setStatus('Randomized the analog look.');
+    setStatus(language === 'ko' ? '아날로그 룩을 무작위로 적용했습니다.' : 'Randomized the analog look.');
     playSound('click');
   };
 
@@ -658,6 +714,19 @@ function App() {
 
   const fitCrop = () => updateSetting('cropZoom', 1);
   const fillCrop = () => updateSetting('cropZoom', 1.6);
+  const autoFitCrop = () => {
+    if (!imageElement) {
+      return;
+    }
+
+    commitSettings((current) => ({
+      ...current,
+      cropZoom: getAutoCropZoom(imageElement, current),
+      cropX: 0,
+      cropY: 0,
+    }));
+    setStatus(language === 'ko' ? '자르기 프레이밍을 자동으로 맞췄습니다.' : 'Auto matched the crop framing.');
+  };
 
   const exportPresetFile = async () => {
     const json = JSON.stringify(
@@ -666,8 +735,8 @@ function App() {
         presets: customPresets.length > 0 ? customPresets : [
           {
             id: `custom-${Date.now()}`,
-            name: 'Current Look',
-            description: 'Exported current Polaroid Studio look.',
+            name: t.currentLook,
+            description: t.exportedLook,
             settings,
           },
         ],
@@ -680,7 +749,11 @@ function App() {
       json,
     });
     if (result && !result.canceled) {
-      setStatus(`Exported presets to ${result.filePath}`);
+      setStatus(
+        language === 'ko'
+          ? `프리셋을 ${result.filePath}에 내보냈습니다.`
+          : `Exported presets to ${result.filePath}`
+      );
     }
   };
 
@@ -703,14 +776,18 @@ function App() {
             : `custom-${preset.id}-${Date.now()}`,
         })),
       ]);
-      setStatus(`Imported ${incoming.length} presets.`);
+      setStatus(
+        language === 'ko'
+          ? `프리셋 ${incoming.length}개를 가져왔습니다.`
+          : `Imported ${incoming.length} presets.`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Preset import failed.');
     }
   };
 
   const saveCustomPreset = () => {
-    const name = window.prompt('Name this preset');
+    const name = window.prompt(t.presetPrompt);
     if (!name?.trim()) {
       return;
     }
@@ -721,12 +798,16 @@ function App() {
       {
         id,
         name: name.trim(),
-        description: 'Saved custom look.',
+        description: language === 'ko' ? '저장한 사용자 룩.' : 'Saved custom look.',
         settings,
       },
     ]);
     setActivePresetId(id);
-    setStatus(`Saved preset ${name.trim()}.`);
+    setStatus(
+      language === 'ko'
+        ? `${name.trim()} 프리셋을 저장했습니다.`
+        : `Saved preset ${name.trim()}.`
+    );
     playSound('success');
   };
 
@@ -803,10 +884,31 @@ function App() {
                   <p className={`text-xs uppercase tracking-[0.3em] ${mutedTextClass}`}>
                     Polaroid Studio
                   </p>
-                  <h1 className="mt-2 text-3xl font-semibold">Create instant nostalgia.</h1>
+                  <h1 className="mt-2 text-3xl font-semibold">{t.heroTitle}</h1>
                 </div>
               </div>
               <div className="flex flex-col gap-2">
+                <div className={`grid grid-cols-2 gap-1 rounded-full border p-1 text-xs ${darkMode ? 'border-stone-700 bg-stone-900' : 'border-stone-300 bg-white/70'}`}>
+                  {(['en', 'ko'] as const).map((nextLanguage) => (
+                    <button
+                      key={nextLanguage}
+                      className={`rounded-full px-3 py-1.5 font-medium transition ${
+                        language === nextLanguage
+                          ? darkMode
+                            ? 'bg-accent text-white'
+                            : 'bg-ink text-white'
+                          : darkMode
+                            ? 'text-stone-300 hover:bg-stone-800'
+                            : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                      onClick={() => setLanguage(nextLanguage)}
+                      type="button"
+                      title={t.language}
+                    >
+                      {nextLanguage === 'ko' ? 'KO' : 'EN'}
+                    </button>
+                  ))}
+                </div>
                 <button
                   className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
                     darkMode
@@ -816,7 +918,7 @@ function App() {
                   onClick={() => setDarkMode((current) => !current)}
                   type="button"
                 >
-                  {darkMode ? 'Light mode' : 'Dark mode'}
+                  {darkMode ? t.lightMode : t.darkMode}
                 </button>
                 <button
                   className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
@@ -836,13 +938,12 @@ function App() {
                   }}
                   type="button"
                 >
-                  {soundEnabled ? 'Sound on' : 'Sound off'}
+                  {soundEnabled ? t.soundOn : t.soundOff}
                 </button>
               </div>
             </div>
             <p className={`mt-2 text-sm leading-6 ${bodyTextClass}`}>
-              Import any photo, tune the analog finish, and export a high-resolution
-              Polaroid frame with caption and shadow.
+              {t.heroDescription}
             </p>
           </div>
 
@@ -850,12 +951,13 @@ function App() {
               onSelectFiles={importFirstFile}
               onOpenNativeDialog={openNativePicker}
               darkMode={darkMode}
+              copy={t.dropzone}
             />
 
           {batchImages.length > 1 ? (
             <div className={`rounded-[26px] border p-4 ${surfaceClass}`}>
               <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
-                Batch queue: {batchImages.length} photos
+                {t.batchQueue}: {batchImages.length} {t.photos}
               </div>
               <div className="mt-3 grid grid-cols-4 gap-2">
                 {batchImages.slice(0, 8).map((asset) => (
@@ -888,11 +990,11 @@ function App() {
                   <div className={`mt-1 text-xs ${mutedTextClass}`}>{originalMeta}</div>
                   {cropRatioMeta ? (
                     <div className={`mt-2 text-xs leading-5 ${cropRatioMeta.isSquare ? mutedTextClass : darkMode ? 'text-orange-200' : 'text-amber-700'}`}>
-                      Original ratio {cropRatioMeta.originalRatio}; Polaroid crop is 1:1.
+                      {t.originalRatio} {cropRatioMeta.originalRatio}; {t.polaroidCrop}
                     </div>
                   ) : null}
                   <div className={`mt-3 text-xs uppercase tracking-[0.24em] ${darkMode ? 'text-stone-500' : 'text-stone-400'}`}>
-                    Original preview
+                    {t.originalPreview}
                   </div>
                 </div>
               </div>
@@ -902,18 +1004,18 @@ function App() {
           <div className={`space-y-5 rounded-[28px] border p-4 ${surfaceClass}`}>
             <div>
               <h2 className={`text-sm font-semibold uppercase tracking-[0.24em] ${mutedTextClass}`}>
-                Crop
+                {t.crop}
               </h2>
               {cropRatioMeta ? (
                 <p className={`mt-2 text-sm leading-6 ${cropRatioMeta.isSquare ? bodyTextClass : darkMode ? 'text-orange-200' : 'text-amber-700'}`}>
                   {cropRatioMeta.isSquare
-                    ? 'This image already matches the 1:1 Polaroid crop.'
-                    : `Your image is ${cropRatioMeta.originalRatio}; exports use a 1:1 square crop. Drag the preview to choose what stays in frame.`}
+                    ? t.cropSquare
+                    : t.cropDifferent(cropRatioMeta.originalRatio)}
                 </p>
               ) : null}
             </div>
             <SliderControl
-              label="Zoom"
+              label={t.zoom}
               value={settings.cropZoom}
               min={1}
               max={3}
@@ -923,7 +1025,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Horizontal"
+              label={t.horizontal}
               value={settings.cropX}
               min={-100}
               max={100}
@@ -931,7 +1033,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Vertical"
+              label={t.vertical}
               value={settings.cropY}
               min={-100}
               max={100}
@@ -939,7 +1041,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Crop rotation"
+              label={t.cropRotation}
               value={settings.cropRotation}
               min={-45}
               max={45}
@@ -949,7 +1051,7 @@ function App() {
             />
             <label className="space-y-2">
               <div className={`flex items-center justify-between text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>
-                <span>Numeric zoom</span>
+                <span>{t.numericZoom}</span>
                 <span className={mutedTextClass}>{settings.cropZoom.toFixed(2)}x</span>
               </div>
               <input
@@ -964,10 +1066,11 @@ function App() {
             </label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                ['Fit', fitCrop],
-                ['Fill', fillCrop],
-                ['Flip H', () => updateSetting('flipX', !settings.flipX)],
-                ['Flip V', () => updateSetting('flipY', !settings.flipY)],
+                [t.autoFit, autoFitCrop],
+                [t.fit, fitCrop],
+                [t.fill, fillCrop],
+                [t.flipH, () => updateSetting('flipX', !settings.flipX)],
+                [t.flipV, () => updateSetting('flipY', !settings.flipY)],
               ].map(([label, handler]) => (
                 <button
                   key={label as string}
@@ -984,18 +1087,18 @@ function App() {
               type="button"
               onClick={resetCrop}
             >
-              Reset crop
+              {t.resetCrop}
             </button>
           </div>
 
           <div className={`space-y-5 rounded-[28px] border p-4 ${surfaceClass}`}>
             <div>
               <h2 className={`text-sm font-semibold uppercase tracking-[0.24em] ${mutedTextClass}`}>
-                Tone & frame
+                {t.toneFrame}
               </h2>
             </div>
             <SliderControl
-              label="Brightness"
+              label={t.brightness}
               value={settings.brightness}
               min={70}
               max={140}
@@ -1004,7 +1107,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Contrast"
+              label={t.contrast}
               value={settings.contrast}
               min={60}
               max={130}
@@ -1013,7 +1116,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Saturation"
+              label={t.saturation}
               value={settings.saturation}
               min={40}
               max={140}
@@ -1022,7 +1125,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Warmth"
+              label={t.warmth}
               value={settings.warmth}
               min={0}
               max={45}
@@ -1030,7 +1133,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Fade"
+              label={t.fade}
               value={settings.fade}
               min={0}
               max={45}
@@ -1038,7 +1141,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Grain"
+              label={t.grain}
               value={settings.grain}
               min={0}
               max={30}
@@ -1046,7 +1149,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Vignette"
+              label={t.vignette}
               value={settings.vignette}
               min={0}
               max={35}
@@ -1054,7 +1157,7 @@ function App() {
               darkMode={darkMode}
             />
             <div className="space-y-2">
-              <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Frame theme</div>
+              <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.frameTheme}</div>
               <div className="grid grid-cols-2 gap-2">
                 {frameThemes.map((theme) => (
                   <button
@@ -1071,13 +1174,13 @@ function App() {
                     type="button"
                     onClick={() => updateSetting('frameTheme', theme.id)}
                   >
-                    {theme.label}
+                    {t.frameThemes[theme.id]}
                   </button>
                 ))}
               </div>
             </div>
             <label className="block space-y-2">
-              <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Overlay</span>
+              <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.overlay}</span>
               <select
                 className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
                 value={settings.overlay}
@@ -1087,13 +1190,13 @@ function App() {
               >
                 {overlays.map((overlay) => (
                   <option key={overlay.id} value={overlay.id}>
-                    {overlay.label}
+                    {t.overlays[overlay.id]}
                   </option>
                 ))}
               </select>
             </label>
             <SliderControl
-              label="Top border"
+              label={t.topBorder}
               value={settings.borderTop}
               min={2}
               max={30}
@@ -1102,7 +1205,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Side border"
+              label={t.sideBorder}
               value={settings.borderSide}
               min={2}
               max={30}
@@ -1111,7 +1214,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Bottom border"
+              label={t.bottomBorder}
               value={settings.borderBottom}
               min={8}
               max={50}
@@ -1120,7 +1223,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Shadow"
+              label={t.shadow}
               value={settings.shadowIntensity}
               min={0}
               max={100}
@@ -1128,7 +1231,7 @@ function App() {
               darkMode={darkMode}
             />
             <SliderControl
-              label="Rotation"
+              label={t.rotation}
               value={settings.rotation}
               min={-12}
               max={12}
@@ -1152,7 +1255,7 @@ function App() {
                 disabled={history.past.length === 0}
                 onClick={undoSettings}
               >
-                Undo
+                {t.undo}
               </button>
               <button
                 className={`rounded-full border px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${
@@ -1164,7 +1267,7 @@ function App() {
                 disabled={history.future.length === 0}
                 onClick={redoSettings}
               >
-                Redo
+                {t.redo}
               </button>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1183,7 +1286,7 @@ function App() {
                   type="button"
                   onClick={() => setPreviewMode(mode)}
                 >
-                  {mode}
+                  {t.previewModes[mode]}
                 </button>
               ))}
             </div>
@@ -1204,9 +1307,9 @@ function App() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className={`text-xs uppercase tracking-[0.24em] ${mutedTextClass}`}>
-                    Presets
+                    {t.presets}
                   </p>
-                  <h2 className="mt-2 text-xl font-semibold">Analog looks</h2>
+                  <h2 className="mt-2 text-xl font-semibold">{t.analogLooks}</h2>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1218,7 +1321,7 @@ function App() {
                     type="button"
                     onClick={saveCustomPreset}
                   >
-                    Save preset
+                    {t.savePreset}
                   </button>
                   <button
                     className={`rounded-full border px-4 py-2 text-sm transition ${
@@ -1229,7 +1332,7 @@ function App() {
                     type="button"
                     onClick={importPresetFile}
                   >
-                    Import
+                    {t.import}
                   </button>
                   <button
                     className={`rounded-full border px-4 py-2 text-sm transition ${
@@ -1240,7 +1343,7 @@ function App() {
                     type="button"
                     onClick={exportPresetFile}
                   >
-                    Export
+                    {t.export}
                   </button>
                   <button
                     className={`rounded-full border px-4 py-2 text-sm transition ${
@@ -1251,7 +1354,7 @@ function App() {
                     type="button"
                     onClick={randomizeLook}
                   >
-                    Randomize
+                    {t.randomize}
                   </button>
                   <button
                     className={`rounded-full border px-4 py-2 text-sm transition ${
@@ -1262,11 +1365,15 @@ function App() {
                     type="button"
                     onClick={() => {
                       commitSettings(defaultSettings, 'classic');
-                      setStatus('Settings reset to default.');
+                      setStatus(
+                        language === 'ko'
+                          ? '설정을 기본값으로 초기화했습니다.'
+                          : 'Settings reset to default.'
+                      );
                       playSound('click');
                     }}
                   >
-                    Reset
+                    {t.reset}
                   </button>
                 </div>
               </div>
@@ -1289,7 +1396,7 @@ function App() {
                         type="button"
                         onClick={() => deleteCustomPreset(preset.id)}
                       >
-                        Remove
+                        {t.remove}
                       </button>
                     ) : null}
                   </div>
@@ -1299,14 +1406,14 @@ function App() {
 
             <section className={`rounded-[28px] border p-5 backdrop-blur-xl ${shellClass}`}>
               <p className={`text-xs uppercase tracking-[0.24em] ${mutedTextClass}`}>
-                Caption & export
+                {t.captionExport}
               </p>
               <div className="mt-3 space-y-4">
                 <label className="block space-y-2">
-                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Caption text</span>
+                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.captionText}</span>
                   <textarea
                     className={`min-h-24 w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
-                    placeholder="Type a date, memory, or location..."
+                    placeholder={t.captionPlaceholder}
                     value={settings.captionText}
                     onChange={(event) =>
                       updateSetting('captionText', event.target.value)
@@ -1314,7 +1421,7 @@ function App() {
                   />
                 </label>
                 <label className="block space-y-2">
-                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Caption font</span>
+                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.captionFont}</span>
                   <select
                     className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
                     value={settings.captionFont}
@@ -1324,7 +1431,7 @@ function App() {
                   >
                     {captionFonts.map((font) => (
                       <option key={font.id} value={font.id}>
-                        {font.label}
+                        {t.captionFonts[font.id as keyof typeof t.captionFonts]}
                       </option>
                     ))}
                   </select>
@@ -1344,23 +1451,23 @@ function App() {
                       )
                     }
                   >
-                    Insert date
+                    {t.insertDate}
                   </button>
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm transition ${darkMode ? 'border-stone-700 text-stone-300 hover:bg-stone-900' : 'border-stone-300 text-stone-600 hover:bg-stone-50'}`}
                     type="button"
                     onClick={() => {
-                      const location = window.prompt('Location stamp');
+                      const location = window.prompt(t.locationPrompt);
                       if (location?.trim()) {
                         updateSetting('captionText', location.trim());
                       }
                     }}
                   >
-                    Location stamp
+                    {t.locationStamp}
                   </button>
                 </div>
                 <div className="space-y-2">
-                  <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Caption color</div>
+                  <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.captionColor}</div>
                   <div className="flex flex-wrap gap-2">
                     {captionColors.map((color) => (
                       <button
@@ -1377,7 +1484,7 @@ function App() {
                       type="color"
                       value={settings.captionColor}
                       onChange={(event) => updateSetting('captionColor', event.target.value)}
-                      title="Custom caption color"
+                      title={t.customCaptionColor}
                     />
                   </div>
                 </div>
@@ -1397,12 +1504,12 @@ function App() {
                       type="button"
                       onClick={() => updateSetting('captionAlign', align)}
                     >
-                      {align}
+                      {t.captionAlign[align]}
                     </button>
                   ))}
                 </div>
                 <SliderControl
-                  label="Caption size"
+                  label={t.captionSize}
                   value={settings.captionFontSize}
                   min={16}
                   max={42}
@@ -1411,7 +1518,7 @@ function App() {
                   darkMode={darkMode}
                 />
                 <SliderControl
-                  label="Softness"
+                  label={t.softness}
                   value={settings.blur}
                   min={0}
                   max={2}
@@ -1421,16 +1528,16 @@ function App() {
                   darkMode={darkMode}
                 />
                 <label className="block space-y-2">
-                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Watermark / signature</span>
+                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.watermark}</span>
                   <input
                     className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
                     value={settings.watermarkText}
                     onChange={(event) => updateSetting('watermarkText', event.target.value)}
-                    placeholder="Optional signature"
+                    placeholder={t.optionalSignature}
                   />
                 </label>
                 <SliderControl
-                  label="Watermark opacity"
+                  label={t.watermarkOpacity}
                   value={settings.watermarkOpacity}
                   min={0}
                   max={100}
@@ -1439,7 +1546,7 @@ function App() {
                   darkMode={darkMode}
                 />
                 <div className="space-y-2">
-                  <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>Export size</div>
+                  <div className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.exportSize}</div>
                   <div className="grid grid-cols-3 gap-2">
                     {exportSizeOptions.map((option) => (
                       <button
@@ -1456,13 +1563,13 @@ function App() {
                         type="button"
                         onClick={() => setExportSizeId(option.id)}
                       >
-                        {option.label}
+                        {t.exportSizes[option.id as keyof typeof t.exportSizes]}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
-                  Export preview: {exportMeta.width} x {exportMeta.height}px
+                  {t.exportPreview}: {exportMeta.width} x {exportMeta.height}px
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
@@ -1473,7 +1580,7 @@ function App() {
                     disabled={!hasImage || busy}
                     type="button"
                   >
-                    Export PNG
+                    {t.exportPng}
                   </button>
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -1485,7 +1592,7 @@ function App() {
                     disabled={!hasImage || busy}
                     type="button"
                   >
-                    Export JPG
+                    {t.exportJpg}
                   </button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1499,7 +1606,7 @@ function App() {
                     disabled={!hasImage || busy}
                     onClick={copyCurrentImage}
                   >
-                    Copy PNG
+                    {t.copyPng}
                   </button>
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -1512,7 +1619,7 @@ function App() {
                     disabled={!hasImage || busy}
                     onDragStart={() => void startDragExport()}
                   >
-                    Drag PNG out
+                    {t.dragPngOut}
                   </button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1526,7 +1633,7 @@ function App() {
                     disabled={batchImages.length === 0 || busy}
                     onClick={() => exportBatch('png')}
                   >
-                    Batch PNG
+                    {t.batchPng}
                   </button>
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -1538,11 +1645,11 @@ function App() {
                     disabled={batchImages.length === 0 || busy}
                     onClick={() => exportBatch('jpg')}
                   >
-                    Batch JPG
+                    {t.batchJpg}
                   </button>
                 </div>
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
-                  {busy ? 'Working...' : status}
+                  {busy ? t.working : status}
                 </div>
                 {error ? (
                   <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-rose-400/30 bg-rose-950/50 text-rose-300' : 'border-rose-200 bg-rose-50 text-rose-600'}`}>
@@ -1563,50 +1670,31 @@ function App() {
                 alt="Polaroid Studio mark"
               />
               <p className={`text-xs uppercase tracking-[0.24em] ${mutedTextClass}`}>
-                Workflow
+                {t.workflow}
               </p>
             </div>
-            <h2 className="mt-2 text-2xl font-semibold">Beginner guide</h2>
+            <h2 className="mt-2 text-2xl font-semibold">{t.beginnerGuide}</h2>
             <p className={`mt-2 text-sm leading-6 ${bodyTextClass}`}>
-              Start with one photo, position it inside the square crop, choose a look,
-              then export the finished Polaroid as PNG or JPG.
+              {t.guideIntro}
             </p>
           </div>
 
           <div className={`space-y-3 rounded-[28px] border p-4 ${surfaceClass}`}>
-            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>How to make a Polaroid</div>
+            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.howToTitle}</div>
             <ol className={`space-y-3 text-sm leading-6 ${bodyTextClass}`}>
-              <li>
-                <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>1. Import a photo.</span>
-                <br />
-                Drag an image into the upload box or use Choose File.
-              </li>
-              <li>
-                <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>2. Set the crop.</span>
-                <br />
-                The Polaroid image area is square. Drag the preview to reposition the photo and use Zoom when you need a tighter frame.
-              </li>
-              <li>
-                <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>3. Pick a look.</span>
-                <br />
-                Try a preset first, then adjust brightness, warmth, fade, grain, vignette, border, shadow, and rotation.
-              </li>
-              <li>
-                <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>4. Add a caption.</span>
-                <br />
-                Type a date, place, or short memory. Choose a font and size that fits the bottom border.
-              </li>
-              <li>
-                <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>5. Export.</span>
-                <br />
-                Use PNG for transparency around the card and JPG for a simple shareable image.
-              </li>
+              {t.guideSteps.map(([title, description]) => (
+                <li key={title}>
+                  <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{title}</span>
+                  <br />
+                  {description}
+                </li>
+              ))}
             </ol>
           </div>
 
           {recentImages.length > 0 ? (
             <div className={`space-y-3 rounded-[28px] border p-4 ${surfaceClass}`}>
-              <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>Recent files</div>
+              <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.recentFiles}</div>
               <div className="grid grid-cols-2 gap-3">
                 {recentImages.map((asset) => (
                   <button
@@ -1619,7 +1707,7 @@ function App() {
                     type="button"
                     onClick={() => {
                       setImageAsset(asset);
-                      setStatus(`Loaded ${asset.name}`);
+                      setStatus(language === 'ko' ? `${asset.name} 불러옴` : `Loaded ${asset.name}`);
                       playSound('shutter');
                     }}
                   >
@@ -1638,25 +1726,23 @@ function App() {
           ) : null}
 
           <div className={`space-y-3 rounded-[28px] border p-4 ${surfaceClass}`}>
-            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>Export behavior</div>
+            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.exportBehavior}</div>
             <p className={`text-sm leading-6 ${bodyTextClass}`}>
-              PNG keeps transparency around the floating card. JPG renders the same look
-              with a flattened background-free card image for easy sharing.
+              {t.exportBehaviorText}
             </p>
           </div>
 
           <div className={`space-y-3 rounded-[28px] border p-4 ${surfaceClass}`}>
-            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>Useful controls</div>
+            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.usefulControls}</div>
             <ul className={`space-y-2 text-sm leading-6 ${bodyTextClass}`}>
-              <li>Use Showing final / Showing before to compare the edited look against the original crop.</li>
-              <li>Use Undo and Redo if a slider, preset, or crop move does not work.</li>
-              <li>Use Save preset when you make a look you want to reuse.</li>
-              <li>Shortcuts: Ctrl+O imports, Ctrl+S exports PNG, Ctrl+Z undoes, Ctrl+Shift+Z redoes.</li>
+              {t.usefulControlItems.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
             </ul>
           </div>
 
           <div className={`rounded-[28px] border p-4 ${surfaceClass}`}>
-            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>Suggested caption</div>
+            <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.suggestedCaption}</div>
             <button
               className={`mt-3 w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
                 darkMode
@@ -1675,7 +1761,7 @@ function App() {
                 )
               }
             >
-              Insert today&apos;s date
+              {t.insertToday}
             </button>
           </div>
         </aside>
@@ -1685,3 +1771,4 @@ function App() {
 }
 
 export default App;
+
