@@ -6,6 +6,30 @@ dist/
 dist-electron/
 release/
 
+# Capacitor synced web output
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+
+# Android build/local files
+android/.gradle/
+android/**/build/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+*.ap_
+
+# iOS build/local files
+ios/App/Pods/
+ios/App/build/
+ios/App/DerivedData/
+ios/App/*.xcworkspace/xcuserdata/
+ios/App/*.xcodeproj/xcuserdata/
+ios/App/*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
 # logs
 *.log
 npm-debug.log*
@@ -27,4 +51,3 @@ Desktop.ini
 
 # TypeScript
 *.tsbuildinfo
-node_modules

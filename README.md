@@ -1,192 +1,154 @@
 # Polaroid Studio
 
-Polaroid Studio is a cross-platform desktop app built with Electron, React, TypeScript, Vite, and Tailwind CSS. It turns imported images into realistic Polaroid-style photos with a live preview, analog-inspired controls, presets, and local export to PNG or JPG.
+Polaroid Studio turns photos into Polaroid-style images. It can be built as:
 
-## Features
+- a web/PWA app
+- a Windows/macOS/Linux desktop app
+- an Android app
+- an iOS app
 
-- Drag-and-drop image import
-- File picker and native system picker upload
-- Supported formats: PNG, JPG, JPEG, WEBP
-- Live original image preview
-- Real-time Polaroid rendering with:
-  - White instant-photo frame
-  - Larger bottom border
-  - Off-white paper texture
-  - Soft drop shadow
-  - Slight rotation
-  - Square crop
-  - Warm vintage tone
-  - Faded contrast and softer color response
-  - Film grain
-  - Blur/softness
-  - Vignette
-  - Optional caption text
-- Editing controls for:
-  - Brightness
-  - Contrast
-  - Saturation
-  - Warmth
-  - Fade
-  - Grain
-  - Vignette
-  - Border size
-  - Shadow intensity
-  - Rotation
-  - Caption text
-  - Caption font size
-- Built-in presets:
-  - Classic Polaroid
-  - 90s Warm Film
-  - Faded Vintage
-  - High Flash Instant
-  - Soft Pastel
-- Export to PNG or JPG
-- Native save dialog
-- High-resolution local rendering
-- Electron Builder packaging for Windows, macOS, and Linux
+All image processing happens locally on the device.
 
-## Tech Stack
-
-- Electron
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- HTML Canvas for preview and export rendering
-
-## Project Structure
-
-```text
-polaroid studio/
-├─ electron/
-│  ├─ main.ts
-│  └─ preload.ts
-├─ src/
-│  ├─ components/
-│  ├─ data/
-│  ├─ lib/
-│  ├─ App.tsx
-│  ├─ main.tsx
-│  ├─ styles.css
-│  ├─ types.ts
-│  └─ vite-env.d.ts
-├─ index.html
-├─ package.json
-├─ postcss.config.js
-├─ tailwind.config.js
-├─ tsconfig.json
-├─ tsconfig.electron.json
-├─ tsconfig.node.json
-└─ vite.config.ts
-```
-
-## Development
-
-### Requirements
+## Requirements
 
 - Node.js 18 or newer
 - npm 9 or newer
 
-### Install
+For mobile builds:
+
+- Android: Android Studio with Android SDK and JDK
+- iOS: macOS with Xcode and CocoaPods
+
+## Install
 
 ```bash
 npm install
 ```
 
-### Run in development
+## Run Locally
 
 ```bash
 npm run dev
 ```
 
-This starts:
+This opens the Electron desktop app in development mode.
 
-- the Vite renderer dev server
-- the Electron TypeScript watcher
-- the Electron desktop app
-
-## Build
-
-### Production build
+## Deploy As Web / PWA
 
 ```bash
-npm run build
+npm run build:pwa
 ```
 
-This generates:
+The deployable web app is created in:
 
-- `dist/` for the React renderer
-- `dist-electron/` for the Electron main and preload scripts
+```text
+dist/
+```
 
-### Package desktop app
+Upload the contents of `dist/` to any static host, such as Vercel, Netlify, GitHub Pages, Cloudflare Pages, or S3.
+
+The PWA files are included automatically:
+
+- `manifest.webmanifest`
+- `sw.js`
+
+## Build Desktop App
 
 ```bash
 npm run dist
 ```
 
-Configured targets:
+Output is created in:
 
-- Windows: NSIS installer (`.exe`)
-- macOS: DMG (`.dmg`)
-- Linux: AppImage (`.AppImage`)
+```text
+release/
+```
 
-Note: packaging each platform usually works best on that platform or in a CI environment configured for cross-compilation/signing.
+Configured desktop targets:
 
-## How It Works
+- Windows: `.exe` installer
+- macOS: `.dmg`
+- Linux: `.AppImage`
 
-Polaroid Studio uses a shared canvas rendering pipeline for both the live preview and final export. The selected image is center-cropped to a square, color-processed with analog-style adjustments, then composited into a Polaroid frame with paper texture, caption area, rotation, and shadow.
+Desktop packaging works best on the target operating system or in CI.
 
-### Rendering pipeline
+## Build Android App
 
-1. Load the imported image locally.
-2. Crop it to a square composition.
-3. Apply brightness, contrast, saturation, blur, warmth, fade, grain, and vignette effects.
-4. Draw the processed image into a textured instant-photo frame.
-5. Add caption text if provided.
-6. Render a rotated card with soft shadow.
-7. Export the final image as PNG or JPG through the Electron save dialog.
+First sync the web app into the Android project:
 
-## Export Behavior
+```bash
+npm run android:sync
+```
 
-- PNG preserves transparent space around the floating Polaroid card and shadow.
-- JPG is flattened onto a warm paper-colored background so it exports cleanly without dark transparency artifacts.
+Open the Android project:
 
-## Scripts
+```bash
+npm run android:open
+```
 
-- `npm run dev` - start the renderer, Electron compiler, and desktop app in development mode
-- `npm run build` - build the renderer and Electron process files
-- `npm run dist` - package the application with Electron Builder
-- `npm run preview` - preview the Vite production build in a browser
+Build from Android Studio, or run:
 
-## Main Files
+```bash
+npm run android:build
+```
 
-- [electron/main.ts](./electron/main.ts) - Electron main process, app window, native open/save dialogs
-- [electron/preload.ts](./electron/preload.ts) - secure renderer bridge for file open/save actions
-- [src/App.tsx](./src/App.tsx) - main desktop UI and control logic
-- [src/lib/polaroidRenderer.ts](./src/lib/polaroidRenderer.ts) - shared canvas renderer for preview and export
-- [src/lib/image.ts](./src/lib/image.ts) - file validation and image loading helpers
-- [src/data/presets.ts](./src/data/presets.ts) - default settings and preset definitions
+Android project location:
 
-## Local-Only Processing
+```text
+android/
+```
 
-All image processing is performed locally on the user’s machine. No images are uploaded to any server.
+## Build iOS App
 
-## Current MVP Notes
+First sync the web app into the iOS project:
 
-- The app uses canvas-based rendering rather than `sharp`.
-- The exported result matches the live visual style closely because both use the same renderer.
-- No external image APIs or cloud services are required.
+```bash
+npm run ios:sync
+```
 
-## Future Improvements
+Open the iOS project:
 
-- Freeform crop and reposition controls
-- More caption fonts
-- Custom paper/frame color themes
-- Batch export
-- Undo/redo history
-- Preset save/load
-- Metadata-aware date caption options
-- App icons and code signing for release builds
+```bash
+npm run ios:open
+```
+
+Build and archive from Xcode, or run:
+
+```bash
+npm run ios:build
+```
+
+iOS project location:
+
+```text
+ios/
+```
+
+Note: iOS builds must be done on macOS with Xcode installed.
+
+## Useful Commands
+
+```bash
+npm run dev          # local desktop development
+npm run build:pwa    # web/PWA build
+npm run build        # web + Electron build
+npm run dist         # desktop installer build
+npm run mobile:sync  # sync latest web build to Android and iOS
+npm run android:open # open Android Studio
+npm run ios:open     # open Xcode
+```
+
+## Project Paths
+
+```text
+src/                 React app
+electron/            Electron desktop shell
+public/              PWA assets
+android/             Android Capacitor project
+ios/                 iOS Capacitor project
+dist/                built web/PWA output
+release/             desktop installer output
+```
 
 ## License
 

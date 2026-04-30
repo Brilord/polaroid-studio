@@ -7,6 +7,13 @@ import logoImage from './assets/logo.png';
 import { defaultSettings, presets } from './data/presets';
 import { fileToImageAsset, loadImage } from './lib/image';
 import {
+  bytesToBlob,
+  copyBlobToClipboard,
+  downloadBlob,
+  downloadTextFile,
+  selectTextFile,
+} from './lib/browserFiles';
+import {
   exportCanvasBlob,
   getAutoCropZoom,
   getExportDimensions,
@@ -76,6 +83,11 @@ const cleanExportName = (name: string) =>
 
 const greatestCommonDivisor = (a: number, b: number): number =>
   b === 0 ? a : greatestCommonDivisor(b, a % b);
+
+const exportMimeTypes: Record<ExportFormat, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+};
 
 function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -534,6 +546,15 @@ function App() {
 
   const openNativePicker = async () => {
     try {
+      if (!window.electronAPI?.openImages) {
+        setStatus(
+          language === 'ko'
+            ? '파일 선택 버튼을 사용해 사진을 가져오세요.'
+            : 'Use Choose Files to import photos on this platform.'
+        );
+        return;
+      }
+
       const results = await window.electronAPI?.openImages();
       if (!results || results.length === 0) {
         return;
@@ -580,9 +601,17 @@ function App() {
       );
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const cleanName = cleanExportName(imageAsset?.name || 'polaroid');
+      const filename = `${cleanName || 'polaroid-studio'}-${Date.now()}.${format}`;
+
+      if (!window.electronAPI?.saveImage) {
+        downloadBlob(blob, filename);
+        setStatus(language === 'ko' ? `${filename} 다운로드됨` : `Downloaded ${filename}`);
+        playSound('success');
+        return;
+      }
 
       const result = await window.electronAPI?.saveImage({
-        suggestedName: `${cleanName || 'polaroid-studio'}-${Date.now()}.${format}`,
+        suggestedName: filename,
         format,
         data: bytes,
       });
@@ -631,6 +660,22 @@ function App() {
         });
       }
 
+      if (!window.electronAPI?.saveImagesToFolder) {
+        files.forEach((file) => {
+          downloadBlob(
+            bytesToBlob(file.data, exportMimeTypes[format]),
+            file.suggestedName
+          );
+        });
+        setStatus(
+          language === 'ko'
+            ? `${files.length}개 파일을 다운로드했습니다.`
+            : `Downloaded ${files.length} files.`
+        );
+        playSound('success');
+        return;
+      }
+
       const result = await window.electronAPI?.saveImagesToFolder({ files });
       if (!result || result.canceled) {
         setStatus(
@@ -660,7 +705,11 @@ function App() {
     try {
       const blob = await exportCanvasBlob(imageElement, settings, 'png', exportSettings);
       const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
-      await window.electronAPI?.copyImage({ data });
+      if (window.electronAPI?.copyImage) {
+        await window.electronAPI.copyImage({ data });
+      } else {
+        await copyBlobToClipboard(blob);
+      }
       setStatus(
         language === 'ko'
           ? '렌더링된 폴라로이드를 클립보드에 복사했습니다.'
@@ -679,8 +728,15 @@ function App() {
 
     const blob = await exportCanvasBlob(imageElement, settings, 'png', exportSettings);
     const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
-    await window.electronAPI?.startImageDrag({
-      suggestedName: `${cleanExportName(imageAsset?.name || 'polaroid') || 'polaroid'}-drag.png`,
+    const suggestedName = `${cleanExportName(imageAsset?.name || 'polaroid') || 'polaroid'}-drag.png`;
+
+    if (!window.electronAPI?.startImageDrag) {
+      downloadBlob(blob, suggestedName);
+      return;
+    }
+
+    await window.electronAPI.startImageDrag({
+      suggestedName,
       data,
     });
   };
@@ -744,6 +800,17 @@ function App() {
       null,
       2
     );
+
+    if (!window.electronAPI?.savePresetFile) {
+      downloadTextFile(json, 'polaroid-studio-presets.json');
+      setStatus(
+        language === 'ko'
+          ? '프리셋 파일을 다운로드했습니다.'
+          : 'Downloaded preset file.'
+      );
+      return;
+    }
+
     const result = await window.electronAPI?.savePresetFile({
       suggestedName: 'polaroid-studio-presets.json',
       json,
@@ -759,7 +826,9 @@ function App() {
 
   const importPresetFile = async () => {
     try {
-      const json = await window.electronAPI?.openPresetFile();
+      const json = window.electronAPI?.openPresetFile
+        ? await window.electronAPI.openPresetFile()
+        : await selectTextFile();
       if (!json) {
         return;
       }

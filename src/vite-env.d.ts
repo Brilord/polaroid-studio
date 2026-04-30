@@ -2,6 +2,10 @@
 
 declare global {
   interface Window {
+    ClipboardItem?: typeof ClipboardItem;
+  }
+
+  interface Window {
     electronAPI?: {
       openImage: () => Promise<{
         name: string;
