@@ -41,6 +41,7 @@ export function SliderControl({
           darkMode ? 'bg-stone-700' : 'bg-stone-200'
         }`}
         type="range"
+        aria-label={label}
         min={min}
         max={max}
         step={step}

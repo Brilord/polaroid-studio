@@ -44,9 +44,9 @@ export function Dropzone({
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-accentSoft text-2xl text-accent transition group-hover:scale-105">
         +
       </div>
-      <h3 className={`mt-4 text-lg font-semibold ${darkMode ? 'text-white' : 'text-ink'}`}>
+      <h2 className={`mt-4 text-lg font-semibold ${darkMode ? 'text-white' : 'text-ink'}`}>
         {copy.title}
-      </h3>
+      </h2>
       <p className={`mt-1 text-sm ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
         {copy.description}
       </p>
@@ -78,6 +78,7 @@ export function Dropzone({
         ref={inputRef}
         className="hidden"
         type="file"
+        aria-label="Image files"
         accept="image/png,image/jpeg,image/jpg,image/webp"
         multiple
         onChange={(event) => onSelectFiles(event.target.files)}

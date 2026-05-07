@@ -89,6 +89,11 @@ const exportMimeTypes: Record<ExportFormat, string> = {
   jpg: 'image/jpeg',
 };
 
+const getStoredLanguage = (): Language => {
+  const storedLanguage = window.localStorage.getItem('polaroid-studio-language');
+  return storedLanguage === 'ko' || storedLanguage === 'en' ? storedLanguage : 'en';
+};
+
 function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const [imageAsset, setImageAsset] = useState<ImageAsset | null>(null);
@@ -103,33 +108,21 @@ function App() {
     'final'
   );
   const [activePresetId, setActivePresetId] = useState<string>('classic');
-  const [darkMode, setDarkMode] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [language, setLanguage] = useState<Language>('en');
+  const [darkMode, setDarkMode] = useState(
+    () => window.localStorage.getItem('polaroid-studio-theme') === 'dark'
+  );
+  const [soundEnabled, setSoundEnabled] = useState(
+    () => window.localStorage.getItem('polaroid-studio-sound') !== 'off'
+  );
+  const [language, setLanguage] = useState<Language>(getStoredLanguage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>('Import a photo to begin.');
+  const [status, setStatus] = useState<string>(() =>
+    getStoredLanguage() === 'ko' ? '시작하려면 사진을 가져오세요.' : 'Import a photo to begin.'
+  );
   const t = translations[language];
 
   useEffect(() => {
-    const storedTheme = window.localStorage.getItem('polaroid-studio-theme');
-    if (storedTheme === 'dark') {
-      setDarkMode(true);
-    }
-
-    const storedSound = window.localStorage.getItem('polaroid-studio-sound');
-    if (storedSound === 'off') {
-      setSoundEnabled(false);
-    }
-
-    const storedLanguage = window.localStorage.getItem('polaroid-studio-language');
-    if (storedLanguage === 'ko' || storedLanguage === 'en') {
-      setLanguage(storedLanguage);
-      setStatus(
-        storedLanguage === 'ko' ? '시작하려면 사진을 가져오세요.' : 'Import a photo to begin.'
-      );
-    }
-
     const storedPresets = window.localStorage.getItem(
       'polaroid-studio-custom-presets'
     );
@@ -931,8 +924,11 @@ function App() {
           : 'bg-grain text-ink'
       }`}
     >
-      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1700px] grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(540px,1fr)_360px]">
-        <aside className={`scrollbar-soft flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-y-auto rounded-[32px] border p-5 backdrop-blur-xl ${shellClass}`}>
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1700px] grid-cols-1 gap-4 2xl:grid-cols-[360px_minmax(540px,1fr)_360px]">
+        <aside
+          aria-label="Editor controls"
+          className={`scrollbar-soft flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-y-auto rounded-[32px] border p-5 backdrop-blur-xl ${shellClass}`}
+        >
           <div>
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">
@@ -1551,6 +1547,7 @@ function App() {
                     <input
                       className="h-9 w-12 rounded-lg border border-stone-300 bg-transparent"
                       type="color"
+                      aria-label={t.customCaptionColor}
                       value={settings.captionColor}
                       onChange={(event) => updateSetting('captionColor', event.target.value)}
                       title={t.customCaptionColor}
@@ -1730,7 +1727,10 @@ function App() {
           </div>
         </main>
 
-        <aside className={`scrollbar-soft flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-y-auto rounded-[32px] border p-5 backdrop-blur-xl ${shellClass}`}>
+        <aside
+          aria-label="Workflow guide"
+          className={`scrollbar-soft flex max-h-[calc(100vh-2rem)] flex-col gap-4 overflow-y-auto rounded-[32px] border p-5 backdrop-blur-xl ${shellClass}`}
+        >
           <div>
             <div className="flex items-center gap-3">
               <img

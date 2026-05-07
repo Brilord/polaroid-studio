@@ -51,3 +51,7 @@ Desktop.ini
 
 # TypeScript
 *.tsbuildinfo
+
+# Playwright output
+test-results/
+playwright-report/
