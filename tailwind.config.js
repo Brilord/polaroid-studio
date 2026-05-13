@@ -10,8 +10,8 @@ module.exports = {
       colors: {
         paper: '#f7f3ea',
         ink: '#171923',
-        accent: '#d18f63',
-        accentSoft: '#f4e1d3',
+        accent: '#8f4f24',
+        accentSoft: '#f7e4d6',
       },
       fontFamily: {
         display: ['"Avenir Next"', '"Segoe UI"', 'sans-serif'],

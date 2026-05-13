@@ -1,4 +1,10 @@
-import { PointerEvent, useEffect, useRef, useState } from 'react';
+import {
+  PointerEvent,
+  TouchEvent as ReactTouchEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { PolaroidSettings } from '../types';
 import { renderPolaroid } from '../lib/polaroidRenderer';
 
@@ -16,10 +22,13 @@ type PreviewStageProps = {
     previous: PolaroidSettings,
     next: PolaroidSettings
   ) => void;
+  onSound?: (type: 'dragStart' | 'dragEnd') => void;
   darkMode?: boolean;
+  compact?: boolean;
+  seed?: string | number;
 };
 
-type CropDragMode = 'move' | 'resize';
+type CropDragMode = 'move' | 'resize' | 'pinch';
 
 export function PreviewStage({
   image,
@@ -29,7 +38,10 @@ export function PreviewStage({
   previewMode = 'final',
   onCropPreview,
   onCropCommit,
+  onSound,
   darkMode = false,
+  compact = false,
+  seed = 'preview',
 }: PreviewStageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const beforeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -42,6 +54,13 @@ export function PreviewStage({
     startSettings: PolaroidSettings;
     latestSettings: PolaroidSettings;
   } | null>(null);
+  const touchPinchRef = useRef<{
+    startDistance: number;
+    startSettings: PolaroidSettings;
+    latestSettings: PolaroidSettings;
+  } | null>(null);
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const splitStartRef = useRef(50);
   const [dragging, setDragging] = useState(false);
   const [split, setSplit] = useState(50);
   const [splitting, setSplitting] = useState(false);
@@ -54,15 +73,17 @@ export function PreviewStage({
     renderPolaroid(canvasRef.current, image, settings, {
       scale: 0.62,
       applyEffects: previewMode !== 'before',
+      seed,
     });
 
     if (beforeCanvasRef.current) {
       renderPolaroid(beforeCanvasRef.current, image, settings, {
         scale: 0.62,
         applyEffects: false,
+        seed,
       });
     }
-  }, [image, settings, ready, previewMode]);
+  }, [image, settings, ready, previewMode, seed]);
 
   const getPointerDistanceFromCenter = (
     event: PointerEvent<HTMLElement>,
@@ -73,22 +94,109 @@ export function PreviewStage({
     return Math.hypot(event.clientX - centerX, event.clientY - centerY);
   };
 
+  const getPointerDistance = () => {
+    const points = Array.from(activePointersRef.current.values());
+    if (points.length < 2) {
+      return 0;
+    }
+
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  };
+
+  const getTouchDistance = (touches: ReactTouchEvent<HTMLCanvasElement>['touches']) => {
+    if (touches.length < 2) {
+      return 0;
+    }
+
+    return Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY
+    );
+  };
+
+  const hasCropChanged = (
+    previous: PolaroidSettings,
+    next: PolaroidSettings
+  ) =>
+    previous.cropX !== next.cropX ||
+    previous.cropY !== next.cropY ||
+    previous.cropZoom !== next.cropZoom;
+
+  const beginTouchPinch = (event: ReactTouchEvent<HTMLCanvasElement>) => {
+    if (!ready || !image || event.touches.length < 2) {
+      return;
+    }
+
+    event.preventDefault();
+    touchPinchRef.current = {
+      startDistance: Math.max(getTouchDistance(event.touches), 1),
+      startSettings: settings,
+      latestSettings: settings,
+    };
+    onSound?.('dragStart');
+    setDragging(true);
+  };
+
+  const moveTouchPinch = (event: ReactTouchEvent<HTMLCanvasElement>) => {
+    if (!touchPinchRef.current || event.touches.length < 2) {
+      return;
+    }
+
+    event.preventDefault();
+    const distance = getTouchDistance(event.touches);
+    const nextSettings = {
+      ...touchPinchRef.current.startSettings,
+      cropZoom: clamp(
+        touchPinchRef.current.startSettings.cropZoom *
+          (distance / touchPinchRef.current.startDistance),
+        1,
+        3
+      ),
+    };
+
+    touchPinchRef.current.latestSettings = nextSettings;
+    onCropPreview?.(nextSettings);
+  };
+
+  const endTouchPinch = () => {
+    if (!touchPinchRef.current) {
+      return;
+    }
+
+    const { startSettings, latestSettings } = touchPinchRef.current;
+    if (hasCropChanged(startSettings, latestSettings)) {
+      onSound?.('dragEnd');
+    }
+    onCropCommit?.(startSettings, latestSettings);
+    touchPinchRef.current = null;
+    setDragging(false);
+  };
+
   const beginCropDrag = (event: PointerEvent<HTMLCanvasElement>) => {
     if (!ready || !image || !canvasRef.current || splitting) {
       return;
     }
 
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    activePointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
     const rect = canvasRef.current.getBoundingClientRect();
+    const pinching = activePointersRef.current.size >= 2;
     dragRef.current = {
       pointerId: event.pointerId,
-      mode: 'move',
+      mode: pinching ? 'pinch' : 'move',
       startX: event.clientX,
       startY: event.clientY,
-      startDistance: getPointerDistanceFromCenter(event, rect),
+      startDistance: pinching
+        ? getPointerDistance()
+        : getPointerDistanceFromCenter(event, rect),
       startSettings: settings,
       latestSettings: settings,
     };
+    onSound?.('dragStart');
     setDragging(true);
   };
 
@@ -110,6 +218,7 @@ export function PreviewStage({
       startSettings: settings,
       latestSettings: settings,
     };
+    onSound?.('dragStart');
     setDragging(true);
   };
 
@@ -118,10 +227,26 @@ export function PreviewStage({
       return;
     }
 
+    activePointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+
     const rect = canvasRef.current.getBoundingClientRect();
     let nextSettings: PolaroidSettings;
 
-    if (dragRef.current.mode === 'resize') {
+    if (dragRef.current.mode === 'pinch') {
+      const distance = getPointerDistance();
+      const startDistance = Math.max(dragRef.current.startDistance, 1);
+      nextSettings = {
+        ...dragRef.current.startSettings,
+        cropZoom: clamp(
+          dragRef.current.startSettings.cropZoom * (distance / startDistance),
+          1,
+          3
+        ),
+      };
+    } else if (dragRef.current.mode === 'resize') {
       const distance = getPointerDistanceFromCenter(event, rect);
       const zoomDelta =
         ((distance - dragRef.current.startDistance) /
@@ -165,15 +290,41 @@ export function PreviewStage({
       return;
     }
 
-    if (event.currentTarget.hasPointerCapture(dragRef.current.pointerId)) {
-      event.currentTarget.releasePointerCapture(dragRef.current.pointerId);
+    activePointersRef.current.delete(event.pointerId);
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    onCropCommit?.(
-      dragRef.current.startSettings,
-      dragRef.current.latestSettings
-    );
+
+    if (activePointersRef.current.size > 0) {
+      return;
+    }
+
+    const { startSettings, latestSettings } = dragRef.current;
+    if (hasCropChanged(startSettings, latestSettings)) {
+      onSound?.('dragEnd');
+    }
+    onCropCommit?.(startSettings, latestSettings);
     dragRef.current = null;
     setDragging(false);
+  };
+
+  const beginSplitDrag = (event: PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    splitStartRef.current = split;
+    setSplitting(true);
+    onSound?.('dragStart');
+  };
+
+  const endSplitDrag = () => {
+    if (!splitting) {
+      return;
+    }
+
+    if (splitStartRef.current !== split) {
+      onSound?.('dragEnd');
+    }
+    setSplitting(false);
   };
 
   const moveSplit = (event: PointerEvent<HTMLDivElement>) => {
@@ -187,7 +338,10 @@ export function PreviewStage({
 
   return (
     <div
-      className={`relative flex h-full min-h-[520px] items-center justify-center overflow-hidden rounded-[34px] border p-8 shadow-panel ${
+      aria-label="Polaroid preview stage"
+      className={`relative flex items-center justify-center overflow-hidden rounded-[22px] border p-3 shadow-panel transition-[height,min-height] duration-200 sm:h-auto sm:min-h-[420px] sm:rounded-[28px] sm:p-5 lg:min-h-[520px] lg:rounded-[34px] lg:p-8 ${
+        compact ? 'h-[190px] min-h-[190px]' : 'h-[240px] min-h-[240px]'
+      } ${
         darkMode
           ? 'border-stone-700 bg-[radial-gradient(circle_at_top,_rgba(50,50,56,0.85),_rgba(24,24,29,0.92)_36%,_rgba(14,14,18,0.98)_100%)]'
           : 'border-white/60 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.8),_rgba(246,236,220,0.88)_36%,_rgba(233,221,206,0.92)_100%)]'
@@ -223,10 +377,10 @@ export function PreviewStage({
         </div>
       ) : (
         <div
-          className="relative flex max-h-full max-w-full items-center justify-center"
+          className="relative flex h-full max-w-full items-center justify-center"
           onPointerMove={moveSplit}
-          onPointerUp={() => setSplitting(false)}
-          onPointerCancel={() => setSplitting(false)}
+          onPointerUp={endSplitDrag}
+          onPointerCancel={endSplitDrag}
         >
           {previewMode === 'split' ? (
             <div
@@ -235,7 +389,7 @@ export function PreviewStage({
             >
               <canvas
                 ref={beforeCanvasRef}
-                className="max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)]"
+                className="h-full max-h-full max-w-full animate-floatIn touch-none object-contain drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)]"
               />
             </div>
           ) : (
@@ -245,10 +399,7 @@ export function PreviewStage({
             <div
               className="absolute bottom-6 top-6 z-20 w-1 cursor-ew-resize rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.16),0_8px_20px_rgba(0,0,0,0.2)]"
               style={{ left: `${split}%` }}
-              onPointerDown={(event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                setSplitting(true);
-              }}
+              onPointerDown={beginSplitDrag}
               title="Drag to compare before and after"
             >
               <div className="absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border border-stone-200 bg-white text-center text-xs font-semibold leading-9 text-stone-600 shadow-md">
@@ -256,10 +407,10 @@ export function PreviewStage({
               </div>
             </div>
           ) : null}
-          <div className="relative max-h-full max-w-full">
+          <div className="relative flex h-full max-w-full items-center justify-center">
             <canvas
               ref={canvasRef}
-              className={`relative max-h-full max-w-full animate-floatIn touch-none drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
+              className={`relative h-full max-h-full max-w-full animate-floatIn touch-none object-contain drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
                 dragging ? 'cursor-grabbing' : 'cursor-grab'
               }`}
               title="Drag to reposition the photo crop"
@@ -267,16 +418,20 @@ export function PreviewStage({
               onPointerMove={moveCropDrag}
               onPointerUp={endCropDrag}
               onPointerCancel={endCropDrag}
+              onTouchStart={beginTouchPinch}
+              onTouchMove={moveTouchPinch}
+              onTouchEnd={endTouchPinch}
+              onTouchCancel={endTouchPinch}
             />
-            {(['left-4 top-4 cursor-nwse-resize', 'right-4 top-4 cursor-nesw-resize', 'bottom-4 left-4 cursor-nesw-resize', 'bottom-4 right-4 cursor-nwse-resize'] as const).map(
+            {(['left-2 top-2 cursor-nwse-resize sm:left-4 sm:top-4', 'right-2 top-2 cursor-nesw-resize sm:right-4 sm:top-4', 'bottom-2 left-2 cursor-nesw-resize sm:bottom-4 sm:left-4', 'bottom-2 right-2 cursor-nwse-resize sm:bottom-4 sm:right-4'] as const).map(
               (position) => (
                 <button
                   key={position}
                   aria-label="Resize photo crop"
-                  className={`absolute z-30 h-5 w-5 rounded-full border-2 shadow-md transition ${
+                  className={`absolute z-30 h-11 w-11 rounded-full border-0 bg-transparent p-[10px] shadow-none transition before:block before:h-6 before:w-6 before:rounded-full before:border-2 before:shadow-md ${
                     darkMode
-                      ? 'border-stone-950 bg-orange-300 hover:bg-orange-200'
-                      : 'border-white bg-accent hover:bg-orange-500'
+                      ? 'before:border-stone-950 before:bg-orange-300 hover:before:bg-orange-200'
+                      : 'before:border-white before:bg-accent hover:before:bg-orange-500'
                   } ${position}`}
                   title="Drag to resize the photo"
                   type="button"

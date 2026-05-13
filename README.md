@@ -19,11 +19,33 @@ For mobile builds:
 - Android: Android Studio with Android SDK and JDK
 - iOS: macOS with Xcode and CocoaPods
 
-## Install
+## Quick Start
+
+```bash
+npm install
+npm run dev
+```
+
+This starts the Electron desktop app in development mode.
+
+## Build Guide
+
+Install dependencies once before building:
 
 ```bash
 npm install
 ```
+
+Choose the build target you want, then run the matching command.
+
+| Target | Command | Output |
+| --- | --- | --- |
+| Web / PWA | `npm run build:pwa` | `dist/` |
+| Desktop installer | `npm run dist` | `release/` |
+| Prepare Android project | `npm run android:sync` | `android/` |
+| Prepare iOS project | `npm run ios:sync` | `ios/` |
+
+The build scripts run TypeScript checks first. If a command fails, read the first error in the terminal, fix it, and run the command again.
 
 ## Run Locally
 
@@ -33,13 +55,15 @@ npm run dev
 
 This opens the Electron desktop app in development mode.
 
-## Deploy As Web / PWA
+## Build Web / PWA
+
+Use this when you want a browser version that can be deployed to a static host.
 
 ```bash
 npm run build:pwa
 ```
 
-The deployable web app is created in:
+When the command finishes, the deployable app is in:
 
 ```text
 dist/
@@ -54,11 +78,13 @@ The PWA files are included automatically:
 
 ## Build Desktop App
 
+Use this when you want an installable desktop app for Windows, macOS, or Linux.
+
 ```bash
 npm run dist
 ```
 
-Output is created in:
+When the command finishes, installers are in:
 
 ```text
 release/
@@ -74,23 +100,25 @@ Desktop packaging works best on the target operating system or in CI.
 
 ## Build Android App
 
-First sync the web app into the Android project:
+Use this when you want to build or publish the Android app.
 
-```bash
-npm run android:sync
-```
+1. Build the web app and sync it into the Android project:
 
-Open the Android project:
+   ```bash
+   npm run android:sync
+   ```
 
-```bash
-npm run android:open
-```
+2. Open the Android project:
 
-Build from Android Studio, or run:
+   ```bash
+   npm run android:open
+   ```
 
-```bash
-npm run android:build
-```
+3. Build from Android Studio, or run:
+
+   ```bash
+   npm run android:build
+   ```
 
 Android project location:
 
@@ -100,23 +128,25 @@ android/
 
 ## Build iOS App
 
-First sync the web app into the iOS project:
+Use this when you want to build or publish the iOS app.
 
-```bash
-npm run ios:sync
-```
+1. Build the web app and sync it into the iOS project:
 
-Open the iOS project:
+   ```bash
+   npm run ios:sync
+   ```
 
-```bash
-npm run ios:open
-```
+2. Open the iOS project:
 
-Build and archive from Xcode, or run:
+   ```bash
+   npm run ios:open
+   ```
 
-```bash
-npm run ios:build
-```
+3. Build and archive from Xcode, or run:
+
+   ```bash
+   npm run ios:build
+   ```
 
 iOS project location:
 

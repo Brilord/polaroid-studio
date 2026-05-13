@@ -3,20 +3,86 @@ import { ExportSettings, PolaroidSettings } from '../types';
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
+type RenderCanvas = HTMLCanvasElement | OffscreenCanvas;
+type RenderContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+type RenderImage = CanvasImageSource & {
+  naturalWidth?: number;
+  naturalHeight?: number;
+  width: number;
+  height: number;
+};
+
 type RenderOptions = {
   scale?: number;
   applyEffects?: boolean;
+  seed?: string | number;
 };
 
 function createCanvas(width: number, height: number) {
+  if (typeof document === 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(width, height);
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   return canvas;
 }
 
+function get2dContext(canvas: RenderCanvas) {
+  return canvas.getContext('2d') as RenderContext | null;
+}
+
+function getImageWidth(image: RenderImage) {
+  return image.naturalWidth ?? image.width;
+}
+
+function getImageHeight(image: RenderImage) {
+  return image.naturalHeight ?? image.height;
+}
+
+function hashString(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createSeededRandom(seed: string | number) {
+  let state =
+    typeof seed === 'number' ? seed >>> 0 : hashString(seed || 'polaroid-studio');
+  if (state === 0) {
+    state = 0x6d2b79f5;
+  }
+
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function getRenderSeed(
+  image: RenderImage,
+  settings: PolaroidSettings,
+  options: RenderOptions
+) {
+  return JSON.stringify({
+    imageWidth: getImageWidth(image),
+    imageHeight: getImageHeight(image),
+    settings,
+    scale: options.scale ?? 1,
+    applyEffects: options.applyEffects ?? true,
+    seed: options.seed ?? 'default',
+  });
+}
+
 function roundedRect(
-  ctx: CanvasRenderingContext2D,
+  ctx: RenderContext,
   x: number,
   y: number,
   width: number,
@@ -33,10 +99,11 @@ function roundedRect(
 }
 
 function applyToneAdjustments(
-  ctx: CanvasRenderingContext2D,
+  ctx: RenderContext,
   width: number,
   height: number,
-  settings: PolaroidSettings
+  settings: PolaroidSettings,
+  random: () => number
 ) {
   const imageData = ctx.getImageData(0, 0, width, height);
   const { data } = imageData;
@@ -59,7 +126,7 @@ function applyToneAdjustments(
     b += (214 - luminance) * 0.14 * fade;
 
     if (grain > 0) {
-      const noise = (Math.random() - 0.5) * 90 * grain;
+      const noise = (random() - 0.5) * 90 * grain;
       r += noise;
       g += noise * 0.9;
       b += noise * 0.75;
@@ -74,25 +141,28 @@ function applyToneAdjustments(
 }
 
 function drawPhoto(
-  image: HTMLImageElement,
+  image: RenderImage,
   settings: PolaroidSettings,
   photoSize: number,
-  applyEffects: boolean
+  applyEffects: boolean,
+  random: () => number
 ) {
   const canvas = createCanvas(photoSize, photoSize);
-  const ctx = canvas.getContext('2d');
+  const ctx = get2dContext(canvas);
 
   if (!ctx) {
     throw new Error('Could not initialize photo canvas.');
   }
 
+  const imageWidth = getImageWidth(image);
+  const imageHeight = getImageHeight(image);
   const coverScale = Math.max(
-    photoSize / image.naturalWidth,
-    photoSize / image.naturalHeight
+    photoSize / imageWidth,
+    photoSize / imageHeight
   );
   const zoom = clamp(settings.cropZoom, 1, 3);
-  const drawWidth = image.naturalWidth * coverScale * zoom;
-  const drawHeight = image.naturalHeight * coverScale * zoom;
+  const drawWidth = imageWidth * coverScale * zoom;
+  const drawHeight = imageHeight * coverScale * zoom;
   const minX = photoSize - drawWidth;
   const minY = photoSize - drawHeight;
   const offsetX = minX * ((settings.cropX + 100) / 200);
@@ -117,7 +187,7 @@ function drawPhoto(
   ctx.filter = 'none';
 
   if (applyEffects) {
-    applyToneAdjustments(ctx, photoSize, photoSize, settings);
+    applyToneAdjustments(ctx, photoSize, photoSize, settings, random);
 
     if (settings.vignette > 0) {
       const vignette = ctx.createRadialGradient(
@@ -140,10 +210,11 @@ function drawPhoto(
 }
 
 function drawPaperTexture(
-  ctx: CanvasRenderingContext2D,
+  ctx: RenderContext,
   cardWidth: number,
   cardHeight: number,
-  theme: PolaroidSettings['frameTheme']
+  theme: PolaroidSettings['frameTheme'],
+  random: () => number
 ) {
   const themes: Record<PolaroidSettings['frameTheme'], [string, string, string]> = {
     white: ['#fffdfa', '#f8f2e8', '#efe6d8'],
@@ -164,10 +235,10 @@ function drawPaperTexture(
 
   const specks = Math.max(120, Math.floor((cardWidth * cardHeight) / 3600));
   for (let i = 0; i < specks; i += 1) {
-    const x = Math.random() * cardWidth;
-    const y = Math.random() * cardHeight;
-    const alpha = Math.random() * 0.05;
-    const shade = 235 + Math.random() * 16;
+    const x = random() * cardWidth;
+    const y = random() * cardHeight;
+    const alpha = random() * 0.05;
+    const shade = 235 + random() * 16;
     ctx.fillStyle = `rgba(${shade}, ${shade - 3}, ${shade - 8}, ${alpha})`;
     ctx.fillRect(x, y, 1.2, 1.2);
   }
@@ -225,14 +296,15 @@ export function getAutoCropZoom(
 }
 
 function drawOverlay(
-  ctx: CanvasRenderingContext2D,
+  ctx: RenderContext,
   photoX: number,
   photoY: number,
   photoSize: number,
   cardWidth: number,
   cardHeight: number,
   settings: PolaroidSettings,
-  safeScale: number
+  safeScale: number,
+  random: () => number
 ) {
   if (settings.overlay === 'none') {
     return;
@@ -304,11 +376,11 @@ function drawOverlay(
 
   if (settings.overlay === 'dust') {
     for (let i = 0; i < 120; i += 1) {
-      const size = (Math.random() * 1.8 + 0.4) * safeScale;
-      ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.28})`;
+      const size = (random() * 1.8 + 0.4) * safeScale;
+      ctx.fillStyle = `rgba(255,255,255,${random() * 0.28})`;
       ctx.fillRect(
-        photoX + Math.random() * photoSize,
-        photoY + Math.random() * photoSize,
+        photoX + random() * photoSize,
+        photoY + random() * photoSize,
         size,
         size
       );
@@ -319,11 +391,14 @@ function drawOverlay(
     ctx.strokeStyle = 'rgba(255,255,255,0.28)';
     ctx.lineWidth = 1.2 * safeScale;
     for (let i = 0; i < 12; i += 1) {
-      const x = photoX + Math.random() * photoSize;
-      const y = photoY + Math.random() * photoSize;
+      const x = photoX + random() * photoSize;
+      const y = photoY + random() * photoSize;
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x + (Math.random() * 40 - 20) * safeScale, y + (80 + Math.random() * 220) * safeScale);
+      ctx.lineTo(
+        x + (random() * 40 - 20) * safeScale,
+        y + (80 + random() * 220) * safeScale
+      );
       ctx.stroke();
     }
   }
@@ -332,7 +407,7 @@ function drawOverlay(
 }
 
 function drawWrappedCaption(
-  ctx: CanvasRenderingContext2D,
+  ctx: RenderContext,
   text: string,
   x: number,
   y: number,
@@ -379,8 +454,8 @@ function getCaptionFontFamily(font: string) {
 }
 
 export function renderPolaroid(
-  target: HTMLCanvasElement,
-  image: HTMLImageElement,
+  target: RenderCanvas,
+  image: RenderImage,
   settings: PolaroidSettings,
   options: RenderOptions = {}
 ) {
@@ -394,7 +469,7 @@ export function renderPolaroid(
   target.width = cardWidth + shadowPad * 2;
   target.height = cardHeight + shadowPad * 2;
 
-  const ctx = target.getContext('2d');
+  const ctx = get2dContext(target);
   if (!ctx) {
     throw new Error('Could not initialize preview canvas.');
   }
@@ -402,17 +477,19 @@ export function renderPolaroid(
   ctx.clearRect(0, 0, target.width, target.height);
 
   const cardCanvas = createCanvas(cardWidth, cardHeight);
-  const cardCtx = cardCanvas.getContext('2d');
+  const cardCtx = get2dContext(cardCanvas);
   if (!cardCtx) {
     throw new Error('Could not initialize card canvas.');
   }
 
+  const random = createSeededRandom(getRenderSeed(image, settings, options));
+
   cardCtx.save();
   roundedRect(cardCtx, 0, 0, cardWidth, cardHeight, 22 * safeScale);
   cardCtx.clip();
-  drawPaperTexture(cardCtx, cardWidth, cardHeight, settings.frameTheme);
+  drawPaperTexture(cardCtx, cardWidth, cardHeight, settings.frameTheme, random);
 
-  const photoCanvas = drawPhoto(image, settings, photoSize, applyEffects);
+  const photoCanvas = drawPhoto(image, settings, photoSize, applyEffects, random);
   const photoX = sideBorder;
   const photoY = topBorder;
   cardCtx.save();
@@ -421,7 +498,17 @@ export function renderPolaroid(
   cardCtx.drawImage(photoCanvas, photoX, photoY);
   cardCtx.restore();
 
-  drawOverlay(cardCtx, photoX, photoY, photoSize, cardWidth, cardHeight, settings, safeScale);
+  drawOverlay(
+    cardCtx,
+    photoX,
+    photoY,
+    photoSize,
+    cardWidth,
+    cardHeight,
+    settings,
+    safeScale,
+    random
+  );
 
   cardCtx.strokeStyle = 'rgba(123, 93, 66, 0.08)';
   cardCtx.lineWidth = 2 * safeScale;
@@ -509,22 +596,24 @@ export function getExportDimensions(
 }
 
 export async function exportCanvasBlob(
-  image: HTMLImageElement,
+  image: RenderImage,
   settings: PolaroidSettings,
   format: 'png' | 'jpg',
-  exportSettings: ExportSettings
+  exportSettings: ExportSettings,
+  seed?: string | number
 ) {
   const exportCanvas = createCanvas(1, 1);
   renderPolaroid(exportCanvas, image, settings, {
     scale: exportSettings.scale,
     applyEffects: true,
+    seed,
   });
 
   const jpegQuality = clamp(exportSettings.quality, 50, 100) / 100;
 
   if (format === 'jpg') {
     const flattenedCanvas = createCanvas(exportCanvas.width, exportCanvas.height);
-    const flattenedCtx = flattenedCanvas.getContext('2d');
+    const flattenedCtx = get2dContext(flattenedCanvas);
 
     if (!flattenedCtx) {
       throw new Error('Could not initialize export canvas.');
@@ -534,28 +623,28 @@ export async function exportCanvasBlob(
     flattenedCtx.fillRect(0, 0, flattenedCanvas.width, flattenedCanvas.height);
     flattenedCtx.drawImage(exportCanvas, 0, 0);
 
-    return new Promise<Blob>((resolve, reject) => {
-      flattenedCanvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error('Failed to render export blob.'));
-            return;
-          }
-          resolve(blob);
-        },
-        'image/jpeg',
-        jpegQuality
-      );
-    });
+    return canvasToBlob(flattenedCanvas, 'image/jpeg', jpegQuality);
+  }
+
+  return canvasToBlob(exportCanvas, 'image/png');
+}
+
+function canvasToBlob(canvas: RenderCanvas, type: string, quality?: number) {
+  if ('convertToBlob' in canvas) {
+    return canvas.convertToBlob({ type, quality });
   }
 
   return new Promise<Blob>((resolve, reject) => {
-    exportCanvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('Failed to render export blob.'));
-        return;
-      }
-      resolve(blob);
-    }, 'image/png');
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error('Failed to render export blob.'));
+          return;
+        }
+        resolve(blob);
+      },
+      type,
+      quality
+    );
   });
 }
