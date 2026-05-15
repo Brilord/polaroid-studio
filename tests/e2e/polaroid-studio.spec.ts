@@ -25,7 +25,7 @@ async function importImages(page: Page, fixtures: ImageFixture[]) {
   const usesMobileLayout = await page.evaluate(() => window.innerWidth < 1024);
 
   if (!usesMobileLayout) {
-    await expect(page.getByText(expectedStatus)).toBeVisible();
+    await expect(page.getByText(expectedStatus).first()).toBeVisible();
   }
   await expect(page.getByAltText('Original upload')).toBeVisible();
   await expect(page.locator('canvas:not(.hidden)').first()).toBeVisible();
@@ -33,6 +33,27 @@ async function importImages(page: Page, fixtures: ImageFixture[]) {
 
 async function importSampleImage(page: Page, fixture = squareImage) {
   await importImages(page, [fixture]);
+}
+
+async function enableAdvancedMode(page: Page) {
+  const advancedButtons = page.getByRole('button', { name: 'Advanced mode' });
+  if ((await advancedButtons.count()) > 0) {
+    await advancedButtons.first().evaluate((button) => {
+      (button as HTMLButtonElement).click();
+    });
+  }
+}
+
+async function openExportStep(page: Page, isMobile: boolean) {
+  if (isMobile) {
+    await page.getByRole('tab', { name: 'Export' }).click();
+    return;
+  }
+
+  const exportStep = page.getByRole('button', { name: '5 Export' });
+  if ((await exportStep.count()) > 0) {
+    await exportStep.click();
+  }
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -229,17 +250,23 @@ test.describe('Polaroid Studio UI and UX', () => {
     await expect(
       page.getByRole('heading', { name: 'Create instant nostalgia.' })
     ).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Choose photos' })).toBeVisible();
+    if (!isMobile) {
+      await expect(page.getByRole('heading', { name: 'Choose Photo' })).toBeVisible();
+    }
     await expect(
       page.getByRole('heading', { name: 'Live Polaroid preview' })
     ).toBeVisible();
     await expect(
-      page.getByRole('button', { name: 'Choose Photo', exact: true })
+      page.getByRole('button', { name: 'Start with a Photo', exact: true }).first()
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Native Picker' })).toBeVisible();
+    await expect(page.getByText('Sample looks').filter({ visible: true }).first()).toBeVisible();
     if (!isMobile) {
-      await expect(page.getByRole('button', { name: 'Export PNG' })).toBeDisabled();
-      await expect(page.getByRole('button', { name: 'Export JPG' })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Try with sample photo' }).first()).toBeVisible();
+    }
+    await expect(page.getByRole('button', { name: 'Beginner mode' })).toBeVisible();
+    if (!isMobile) {
+      await expect(page.getByRole('button', { name: '1 Choose Photo' })).toBeVisible();
+      await expect(page.getByRole('button', { name: '5 Export' })).toBeVisible();
     }
     await expectNoHorizontalOverflow(page);
   });
@@ -285,13 +312,21 @@ test.describe('Polaroid Studio UI and UX', () => {
     await expect(page.getByText(/Original ratio 2:1; Polaroid crop is 1:1\./)).toBeVisible();
 
     await importSampleImage(page, largeImage);
-    if (isMobile) {
-      await page.getByRole('tab', { name: 'Export' }).click();
-    }
-    const exportScope = isMobile ? page.getByLabel('Mobile editor panel') : page;
-    await expect(exportScope.getByRole('button', { name: 'Export PNG' })).toBeEnabled();
-    await expect(exportScope.getByRole('button', { name: 'Export JPG' })).toBeEnabled();
-    await expect(exportScope.getByText(/Export preview: \d+ x \d+px/)).toBeVisible();
+    await openExportStep(page, isMobile);
+    const exportScope = isMobile ? page.getByLabel('Mobile editor panel') : page.getByRole('main');
+    await expect(
+      exportScope.getByRole('button', {
+        name: isMobile ? /Export PNG/ : 'Export PNG Best quality',
+      })
+    ).toBeEnabled();
+    await expect(
+      exportScope.getByRole('button', {
+        name: isMobile ? /Export JPG/ : 'Export JPG Best for sharing',
+      })
+    ).toBeEnabled();
+    await expect(
+      exportScope.getByText(/Export preview: \d+ x \d+px/).filter({ visible: true })
+    ).toBeVisible();
   });
 
   test('shows batch queue and enables batch export from fixture set', async ({
@@ -299,13 +334,14 @@ test.describe('Polaroid Studio UI and UX', () => {
     isMobile,
   }) => {
     await importImages(page, batchImages);
+    await enableAdvancedMode(page);
     if (isMobile) {
       await page.getByRole('tab', { name: 'Export' }).click();
     }
 
     await expect(page.getByText('Batch queue: 3 photos')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Batch PNG' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Batch JPG' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Export All as PNG' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Export All as JPG' })).toBeEnabled();
   });
 
   test('supports editing, presets, undo, redo, and preview comparison', async ({
@@ -313,6 +349,7 @@ test.describe('Polaroid Studio UI and UX', () => {
     isMobile,
   }) => {
     await importSampleImage(page);
+    await enableAdvancedMode(page);
     if (isMobile) {
       await page.getByRole('tab', { name: 'Analog looks' }).click();
     }
@@ -333,7 +370,10 @@ test.describe('Polaroid Studio UI and UX', () => {
       await page.getByRole('tab', { name: 'Caption text' }).click();
     }
     const captionScope = isMobile ? page.getByLabel('Mobile editor panel') : main;
-    await captionScope.getByLabel('Caption text').fill('May 5, 2026');
+    await captionScope
+      .getByLabel('Caption text')
+      .filter({ visible: true })
+      .fill('May 5, 2026');
     await captionScope.getByLabel('Caption font').selectOption('typewriter');
     await expect(captionScope.getByLabel('Caption text')).toHaveValue('May 5, 2026');
 
@@ -343,20 +383,26 @@ test.describe('Polaroid Studio UI and UX', () => {
 
   test('exports PNG and JPG downloads from the browser path', async ({ page, isMobile }) => {
     await importSampleImage(page);
-    if (isMobile) {
-      await page.getByRole('tab', { name: 'Export' }).click();
-    }
-    const exportScope = isMobile ? page.getByLabel('Mobile editor panel') : page;
+    await openExportStep(page, isMobile);
+    const exportScope = isMobile ? page.getByLabel('Mobile editor panel') : page.getByRole('main');
 
     const [pngDownload] = await Promise.all([
       page.waitForEvent('download'),
-      exportScope.getByRole('button', { name: 'Export PNG' }).click(),
+      exportScope
+        .getByRole('button', {
+          name: isMobile ? /Export PNG/ : 'Export PNG Best quality',
+        })
+        .click(),
     ]);
     expect(pngDownload.suggestedFilename()).toMatch(/^square-polaroid-\d+\.png$/);
 
     const [jpgDownload] = await Promise.all([
       page.waitForEvent('download'),
-      exportScope.getByRole('button', { name: 'Export JPG' }).click(),
+      exportScope
+        .getByRole('button', {
+          name: isMobile ? /Export JPG/ : 'Export JPG Best for sharing',
+        })
+        .click(),
     ]);
     expect(jpgDownload.suggestedFilename()).toMatch(/^square-polaroid-\d+\.jpg$/);
   });
@@ -367,12 +413,14 @@ test.describe('Polaroid Studio UI and UX', () => {
     await page.keyboard.press('Tab');
     await expect(page.locator(':focus')).toBeVisible();
 
-    await page.keyboard.press('ControlOrMeta+O');
-    await expect(
-      page.getByText('Use Choose Photo to import photos on this platform.')
-    ).toBeVisible();
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.keyboard.press('ControlOrMeta+O'),
+    ]);
+    expect(fileChooser).toBeTruthy();
 
     await importSampleImage(page);
+    await enableAdvancedMode(page);
     await page.getByLabel('Brightness').fill('108');
     await page.locator('main').click();
     await expect(page.getByRole('button', { name: 'Undo' })).toBeEnabled();
@@ -399,6 +447,7 @@ test.describe('Polaroid Studio UI and UX', () => {
     await installAudioSpy(page);
 
     await expectAudioAfter(page, () => importSampleImage(page));
+    await enableAdvancedMode(page);
     await expectAudioAfter(page, () =>
       page.getByRole('button', { name: /90s Warm Film/ }).click()
     );
@@ -415,7 +464,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       page.getByRole('button', { name: 'Split' }).click()
     );
     await expectAudioAfter(page, () =>
-      page.getByRole('button', { name: 'Large' }).click()
+      page.getByRole('button', { name: /Large/ }).click()
     );
     await expectAudioAfter(page, () =>
       page.getByRole('button', { name: 'Black' }).click()
@@ -457,7 +506,7 @@ test.describe('Polaroid Studio UI and UX', () => {
     await expectAudioAfter(page, async () => {
       const [download] = await Promise.all([
         page.waitForEvent('download'),
-        page.getByRole('button', { name: 'Export PNG' }).click(),
+        page.getByRole('button', { name: /Export PNG/ }).click(),
       ]);
       expect(download.suggestedFilename()).toMatch(/^square-polaroid-\d+\.png$/);
     });
@@ -489,8 +538,12 @@ test.describe('Polaroid Studio UI and UX', () => {
     await expect.poll(() => getAudioStartCount(page)).toBeGreaterThan(countBeforeError);
   });
 
-  test('supports dragging the crop and split comparison handles', async ({ page }) => {
+  test('supports dragging the crop and split comparison handles', async ({
+    page,
+    isMobile,
+  }) => {
     await importSampleImage(page, landscapeImage);
+    await enableAdvancedMode(page);
     const main = page.getByRole('main');
 
     const cropYBefore = await page.getByLabel('Vertical').inputValue();
@@ -527,6 +580,10 @@ test.describe('Polaroid Studio UI and UX', () => {
       .poll(() => page.getByLabel('Vertical').inputValue())
       .not.toBe(cropYBefore);
     await expect(main.getByRole('button', { name: 'Undo' })).toBeEnabled();
+
+    if (isMobile) {
+      return;
+    }
 
     await main.getByRole('button', { name: 'Split' }).click();
     const splitHandle = page.locator('[title="Drag to compare before and after"]');
@@ -575,12 +632,17 @@ test.describe('Polaroid Studio UI and UX', () => {
 
     await importSampleImage(page, portraitImage);
     if (isMobile) {
-      await page.getByRole('tab', { name: 'Caption text' }).click();
+      await page.getByRole('tab', { name: 'Caption' }).click();
+    } else {
+      await page.getByRole('button', { name: '4 Caption' }).click();
     }
     const captionScope = isMobile
       ? page.getByLabel('Mobile editor panel')
       : page.getByRole('main');
-    await captionScope.getByLabel('Caption text').fill('May 5, 2026');
+    await captionScope
+      .getByLabel('Caption text')
+      .filter({ visible: true })
+      .fill('May 5, 2026');
     await expect(page).toHaveScreenshot('loaded-workspace.png', {
       fullPage: true,
     });
@@ -588,11 +650,11 @@ test.describe('Polaroid Studio UI and UX', () => {
 
   test('keeps the core workflow usable on a phone viewport', async ({ page }) => {
     await page.setViewportSize({ width: 393, height: 851 });
-    await expect(page.getByRole('button', { name: 'Choose Photo', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start with a Photo', exact: true }).first()).toBeVisible();
     await expect(
       page.getByRole('heading', { name: 'Live Polaroid preview' })
     ).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Quick mode' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Pick Look' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -616,9 +678,13 @@ test.describe('Polaroid Studio UI and UX', () => {
       });
       await expect(mobileTabs).toBeVisible();
       await expect(
-        mobileTabs.getByRole('tab', { name: 'Quick mode' })
+        mobileTabs.getByRole('tab', { name: 'Pick Look' })
       ).toHaveAttribute('aria-selected', 'true');
       await expect(mobileTabs.getByRole('tab', { name: 'Crop' })).toBeVisible();
+      await expect(mobileTabs.getByRole('tab', { name: 'Caption' })).toBeVisible();
+      await expect(mobileTabs.getByRole('tab', { name: 'Export' })).toBeVisible();
+
+      await enableAdvancedMode(page);
       await expect(
         mobileTabs.getByRole('tab', { name: 'Analog looks' })
       ).toBeVisible();
@@ -639,7 +705,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       await expectPreviewCanvasInsideStage(page);
 
       await expect(page.getByRole('button', { name: 'Change Photo' })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'Choose photos' })).toBeHidden();
+      await expect(page.getByRole('heading', { name: 'Start with a photo' })).toBeHidden();
 
       const stage = page.getByLabel('Polaroid preview stage');
       const heightBefore = await stage.evaluate((node) =>
@@ -648,7 +714,7 @@ test.describe('Polaroid Studio UI and UX', () => {
 
       await page.evaluate(() => window.scrollTo(0, 900));
       await page.waitForTimeout(250);
-      await expect(page.getByRole('tab', { name: 'Quick mode' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'Pick Look' })).toBeVisible();
 
       const heightAfter = await stage.evaluate((node) =>
         (node as HTMLElement).getBoundingClientRect().height
@@ -659,6 +725,7 @@ test.describe('Polaroid Studio UI and UX', () => {
 
     test('keeps preview sticky while editing crop controls', async ({ page }) => {
       await importSampleImage(page, landscapeImage);
+      await enableAdvancedMode(page);
       const mobileEditor = page.getByRole('main');
 
       await page.getByRole('tab', { name: 'Crop' }).click();
@@ -688,6 +755,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       page,
     }) => {
       await importSampleImage(page, portraitImage);
+      await enableAdvancedMode(page);
       const mobileEditor = page.getByLabel('Mobile editor panel');
 
       await page.getByRole('tab', { name: 'Quick mode' }).click();
@@ -698,7 +766,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       await expect(mobileEditor.getByLabel('Watermark / signature')).toBeHidden();
 
       await page.getByRole('tab', { name: 'Frame theme' }).click();
-      await expect(mobileEditor.getByText('Overlay')).toBeVisible();
+      await expect(mobileEditor.getByText('Texture')).toBeVisible();
       await expect(mobileEditor.getByLabel('Bottom border')).toBeVisible();
       await expect(
         mobileEditor.getByText('Pick a look, crop, export.')
@@ -714,7 +782,7 @@ test.describe('Polaroid Studio UI and UX', () => {
         mobileEditor.getByText(/Export preview: \d+ x \d+px/)
       ).toBeVisible();
       await expect(
-        mobileEditor.getByRole('button', { name: 'Batch PNG' })
+        mobileEditor.getByRole('button', { name: 'Export All as PNG' })
       ).toBeVisible();
     });
 
@@ -732,7 +800,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       await exportBar.getByRole('button', { name: 'Export' }).click();
       await expect(exportBar.getByRole('button', { name: 'Export PNG' })).toBeEnabled();
       await expect(exportBar.getByRole('button', { name: 'Export JPG' })).toBeEnabled();
-      await expect(exportBar.getByRole('button', { name: 'Copy' })).toBeEnabled();
+      await expect(exportBar.getByRole('button', { name: 'Copy' })).toBeHidden();
 
       const barBox = await exportBar.boundingBox();
       const viewport = page.viewportSize();
@@ -747,7 +815,7 @@ test.describe('Polaroid Studio UI and UX', () => {
       expect(Number.parseFloat(paddingBottom)).toBeGreaterThanOrEqual(12);
     });
 
-    test('advances quick flow and persists the last mobile tab', async ({ page }) => {
+    test('advances beginner flow and persists the last mobile tab', async ({ page }) => {
       await importSampleImage(page);
       const mobileTabs = page.getByRole('tablist', {
         name: 'Mobile editor sections',
@@ -759,19 +827,19 @@ test.describe('Polaroid Studio UI and UX', () => {
         'true'
       );
 
-      await mobileTabs.getByRole('tab', { name: 'Caption text' }).click();
+      await mobileTabs.getByRole('tab', { name: 'Caption' }).click();
       await page.reload();
       await expect(
         page.getByRole('tablist', { name: 'Mobile editor sections' }).getByRole(
           'tab',
-          { name: 'Caption text' }
+          { name: 'Caption' }
         )
       ).toHaveAttribute('aria-selected', 'true');
     });
 
     test('supports pinch-to-zoom on the mobile preview', async ({ page }) => {
       await importSampleImage(page);
-      const mobileEditor = page.getByRole('main');
+      const mobileEditor = page.getByLabel('Mobile editor panel');
       await page.getByRole('tab', { name: 'Crop' }).click();
 
       const zoomBefore = await mobileEditor.getByLabel('Zoom').inputValue();

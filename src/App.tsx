@@ -16,6 +16,7 @@ import {
   exportCanvasBlob,
   getAutoCropZoom,
   getExportDimensions,
+  renderPolaroid,
 } from './lib/polaroidRenderer';
 import { renderExportBlobInWorker } from './lib/exportWorkerClient';
 import {
@@ -60,6 +61,13 @@ type BatchProgress = {
   failures: BatchFailure[];
 };
 
+type ExportResult = {
+  format: ExportFormat;
+  filename: string;
+  width: number;
+  height: number;
+};
+
 type ExportSizeOption = {
   id: string;
   label: string;
@@ -67,6 +75,7 @@ type ExportSizeOption = {
 };
 
 type MobileTab = 'quick' | 'crop' | 'look' | 'frame' | 'caption' | 'export';
+type BeginnerStep = 'choose' | 'look' | 'crop' | 'caption' | 'export';
 type SoundType =
   | 'click'
   | 'shutter'
@@ -137,12 +146,105 @@ const mobileTabIds: MobileTab[] = [
   'caption',
   'export',
 ];
+const beginnerStepIds: BeginnerStep[] = [
+  'choose',
+  'look',
+  'crop',
+  'caption',
+  'export',
+];
+
+const uploadInputId = 'polaroid-studio-upload';
 
 const getStoredMobileTab = (): MobileTab => {
   const storedTab = window.localStorage.getItem('polaroid-studio-mobile-tab');
   return mobileTabIds.includes(storedTab as MobileTab)
     ? (storedTab as MobileTab)
     : 'quick';
+};
+
+const getStoredBeginnerStep = (): BeginnerStep => {
+  const storedStep = window.localStorage.getItem('polaroid-studio-beginner-step');
+  return beginnerStepIds.includes(storedStep as BeginnerStep)
+    ? (storedStep as BeginnerStep)
+    : 'choose';
+};
+
+const getStoredBeginnerMode = () =>
+  window.localStorage.getItem('polaroid-studio-mode') !== 'advanced';
+
+const getStoredCompletedBeginnerSteps = (): BeginnerStep[] => {
+  const storedSteps = window.localStorage.getItem(
+    'polaroid-studio-completed-steps'
+  );
+  if (!storedSteps) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(storedSteps) as BeginnerStep[];
+    return parsed.filter((step) => beginnerStepIds.includes(step));
+  } catch {
+    return [];
+  }
+};
+
+const createDemoPhotoDataUrl = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200;
+  canvas.height = 900;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return '';
+  }
+
+  const sky = context.createLinearGradient(0, 0, 0, canvas.height);
+  sky.addColorStop(0, '#f6b982');
+  sky.addColorStop(0.46, '#f5d3a3');
+  sky.addColorStop(1, '#6f8f96');
+  context.fillStyle = sky;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = '#fff1b8';
+  context.beginPath();
+  context.arc(900, 220, 92, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = '#45515a';
+  context.beginPath();
+  context.moveTo(0, 610);
+  context.lineTo(260, 330);
+  context.lineTo(520, 610);
+  context.closePath();
+  context.fill();
+  context.fillStyle = '#5f6f6f';
+  context.beginPath();
+  context.moveTo(330, 620);
+  context.lineTo(630, 300);
+  context.lineTo(970, 620);
+  context.closePath();
+  context.fill();
+  context.fillStyle = '#e8eef0';
+  context.beginPath();
+  context.moveTo(630, 300);
+  context.lineTo(548, 430);
+  context.lineTo(684, 398);
+  context.lineTo(746, 490);
+  context.closePath();
+  context.fill();
+
+  const sea = context.createLinearGradient(0, 560, 0, canvas.height);
+  sea.addColorStop(0, '#5c9aa8');
+  sea.addColorStop(1, '#264d5c');
+  context.fillStyle = sea;
+  context.fillRect(0, 575, canvas.width, 325);
+  context.fillStyle = 'rgba(255,255,255,0.55)';
+  for (let y = 628; y < 835; y += 54) {
+    context.fillRect(130, y, 390, 4);
+    context.fillRect(690, y + 18, 300, 3);
+  }
+
+  return canvas.toDataURL('image/png');
 };
 
 function App() {
@@ -162,6 +264,10 @@ function App() {
   const [previewMode, setPreviewMode] = useState<'final' | 'before' | 'split'>(
     'final'
   );
+  const [beginnerMode, setBeginnerMode] = useState(getStoredBeginnerMode);
+  const [activeBeginnerStep, setActiveBeginnerStep] = useState<BeginnerStep>(
+    getStoredBeginnerStep
+  );
   const [activeMobileTab, setActiveMobileTab] = useState<MobileTab>(
     getStoredMobileTab
   );
@@ -176,6 +282,15 @@ function App() {
   const [language, setLanguage] = useState<Language>(getStoredLanguage);
   const [busy, setBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+  const [lastExport, setLastExport] = useState<ExportResult | null>(null);
+  const [exportPreviewUrl, setExportPreviewUrl] = useState<string>('');
+  const [presetPreviewUrls, setPresetPreviewUrls] = useState<Record<string, string>>({});
+  const [samplePresetPreviewUrls, setSamplePresetPreviewUrls] = useState<
+    Record<string, string>
+  >({});
+  const [completedBeginnerSteps, setCompletedBeginnerSteps] = useState<
+    BeginnerStep[]
+  >(getStoredCompletedBeginnerSteps);
   const [storageReady, setStorageReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>(() =>
@@ -286,6 +401,30 @@ function App() {
   }, [activeMobileTab]);
 
   useEffect(() => {
+    window.localStorage.setItem(
+      'polaroid-studio-mode',
+      beginnerMode ? 'beginner' : 'advanced'
+    );
+  }, [beginnerMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem('polaroid-studio-beginner-step', activeBeginnerStep);
+  }, [activeBeginnerStep]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      'polaroid-studio-completed-steps',
+      JSON.stringify(completedBeginnerSteps)
+    );
+  }, [completedBeginnerSteps]);
+
+  useEffect(() => {
+    if (beginnerMode && (activeMobileTab === 'look' || activeMobileTab === 'frame')) {
+      setActiveMobileTab('quick');
+    }
+  }, [activeMobileTab, beginnerMode]);
+
+  useEffect(() => {
     const updateMobilePreviewSize = () => {
       setMobilePreviewCompact(window.scrollY > 320);
     };
@@ -384,6 +523,20 @@ function App() {
     () => getExportDimensions(settings, exportSettings),
     [settings, exportSettings]
   );
+  const exportChecklist = [
+    {
+      label: t.checklist.photoPositioned,
+      done: Boolean(hasImage && imageElement),
+    },
+    {
+      label: t.checklist.captionLooksRight,
+      done: settings.captionText.trim().length > 0,
+    },
+    {
+      label: t.checklist.sizeSelected,
+      done: Boolean(exportSizeId),
+    },
+  ];
   const renderSeed = useMemo(() => {
     if (imageRef) {
       return imageRef.id;
@@ -395,14 +548,132 @@ function App() {
 
     return 'empty';
   }, [imageAsset, imageRef]);
-  const mobileTabs: { id: MobileTab; label: string }[] = [
-    { id: 'quick', label: t.quickMode },
-    { id: 'crop', label: t.crop },
-    { id: 'look', label: t.analogLooks },
-    { id: 'frame', label: t.frameTheme },
-    { id: 'caption', label: t.captionText },
-    { id: 'export', label: t.export },
-  ];
+  const presetPreviewBaseSettings = useMemo(
+    () => ({
+      ...defaultSettings,
+      cropZoom: settings.cropZoom,
+      cropX: settings.cropX,
+      cropY: settings.cropY,
+      cropRotation: settings.cropRotation,
+      flipX: settings.flipX,
+      flipY: settings.flipY,
+    }),
+    [
+      settings.cropRotation,
+      settings.cropX,
+      settings.cropY,
+      settings.cropZoom,
+      settings.flipX,
+      settings.flipY,
+    ]
+  );
+
+  useEffect(() => {
+    if (!imageElement || !hasImage) {
+      setPresetPreviewUrls({});
+      return;
+    }
+
+    const previews: Record<string, string> = {};
+    allPresets.forEach((preset) => {
+      const canvas = document.createElement('canvas');
+      renderPolaroid(
+        canvas,
+        imageElement,
+        {
+          ...settings,
+          ...presetPreviewBaseSettings,
+          ...preset.settings,
+          captionText: '',
+          watermarkText: '',
+          rotation: 0,
+        },
+        {
+          scale: 0.13,
+          applyEffects: true,
+          seed: `${renderSeed}:${preset.id}:preview`,
+        }
+      );
+      previews[preset.id] = canvas.toDataURL('image/jpeg', 0.78);
+    });
+    setPresetPreviewUrls(previews);
+  }, [allPresets, hasImage, imageElement, presetPreviewBaseSettings, renderSeed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const buildSamplePreviews = async () => {
+      const dataUrl = createDemoPhotoDataUrl();
+      if (!dataUrl) {
+        return;
+      }
+
+      const sampleImage = await loadImage(dataUrl);
+      if (cancelled) {
+        return;
+      }
+
+      const previews: Record<string, string> = {};
+      allPresets.slice(0, 5).forEach((preset) => {
+        const canvas = document.createElement('canvas');
+        renderPolaroid(
+          canvas,
+          sampleImage,
+          {
+            ...defaultSettings,
+            ...preset.settings,
+            captionText: '',
+            watermarkText: '',
+            rotation: 0,
+          },
+          {
+            scale: 0.13,
+            applyEffects: true,
+            seed: `sample:${preset.id}:preview`,
+          }
+        );
+        previews[preset.id] = canvas.toDataURL('image/jpeg', 0.78);
+      });
+
+      if (!cancelled) {
+        setSamplePresetPreviewUrls(previews);
+      }
+    };
+
+    void buildSamplePreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [allPresets]);
+
+  useEffect(() => {
+    if (!imageElement || !hasImage) {
+      setExportPreviewUrl('');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    renderPolaroid(canvas, imageElement, settings, {
+      scale: 0.18,
+      applyEffects: true,
+      seed: `${renderSeed}:export-preview`,
+    });
+    setExportPreviewUrl(canvas.toDataURL('image/png'));
+  }, [hasImage, imageElement, renderSeed, settings]);
+  const mobileTabs: { id: MobileTab; label: string }[] = beginnerMode
+    ? [
+        { id: 'quick', label: t.beginnerSteps.look },
+        { id: 'crop', label: t.beginnerSteps.crop },
+        { id: 'caption', label: t.beginnerSteps.caption },
+        { id: 'export', label: t.beginnerSteps.export },
+      ]
+    : [
+        { id: 'quick', label: t.quickMode },
+        { id: 'crop', label: t.crop },
+        { id: 'look', label: t.analogLooks },
+        { id: 'frame', label: t.frameTheme },
+        { id: 'caption', label: t.captionText },
+        { id: 'export', label: t.export },
+      ];
   const mobilePanelClass = `rounded-[22px] border p-4 backdrop-blur-xl ${shellClass}`;
   const mobileChipClass = `snap-start scroll-mt-[420px] whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium transition`;
   const secondaryButtonClass = `rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -416,6 +687,26 @@ function App() {
     { id: 'caption', label: t.quickSteps.caption },
     { id: 'export', label: t.quickSteps.export },
   ];
+  const beginnerSteps: { id: BeginnerStep; label: string; description: string }[] =
+    beginnerStepIds.map((id) => ({
+      id,
+      label: t.beginnerSteps[id],
+      description: t.stepDescriptions[id],
+    }));
+  const activeBeginnerStepIndex = Math.max(
+    beginnerSteps.findIndex((step) => step.id === activeBeginnerStep),
+    0
+  );
+  const nextBeginnerStep =
+    beginnerSteps[
+      Math.min(activeBeginnerStepIndex + 1, beginnerSteps.length - 1)
+    ];
+  const nextBeginnerCtaLabel =
+    activeBeginnerStep === 'export'
+      ? t.exportPng
+      : hasImage
+        ? t.nextStep(nextBeginnerStep.label)
+        : t.startWithPhoto;
   const quickStepIndex = Math.max(
     quickFlow.findIndex((step) => step.id === activeMobileTab),
     0
@@ -610,6 +901,7 @@ function App() {
           past: [...currentHistory.past.slice(-39), current],
           future: [],
         }));
+        setLastExport(null);
         setActivePresetId(presetId);
         return next;
       });
@@ -666,6 +958,12 @@ function App() {
     );
   }, []);
 
+  const markBeginnerStepComplete = useCallback((step: BeginnerStep) => {
+    setCompletedBeginnerSteps((current) =>
+      current.includes(step) ? current : [...current, step]
+    );
+  }, []);
+
   const applyPreset = (presetId: string) => {
     const preset = allPresets.find((item) => item.id === presetId);
     if (!preset) {
@@ -676,6 +974,7 @@ function App() {
       ...current,
       ...preset.settings,
     }), presetId);
+    markBeginnerStepComplete('look');
     playSound('click');
   };
 
@@ -731,6 +1030,10 @@ function App() {
       setBatchImageRefs(refs);
       setImageAsset(asset);
       setImageRef(ref);
+      setLastExport(null);
+      markBeginnerStepComplete('choose');
+      setActiveBeginnerStep('look');
+      setActiveMobileTab('quick');
       assets.forEach((item, index) => rememberImage(item, refs[index]));
       setError(null);
       setStatus(
@@ -770,6 +1073,10 @@ function App() {
       setBatchImageRefs(refs);
       setImageAsset(results[0]);
       setImageRef(refs[0]);
+      setLastExport(null);
+      markBeginnerStepComplete('choose');
+      setActiveBeginnerStep('look');
+      setActiveMobileTab('quick');
       results.forEach((item, index) => rememberImage(item, refs[index]));
       setStatus(
         results.length === 1
@@ -788,6 +1095,49 @@ function App() {
       );
       playSound('error');
     }
+  };
+
+  const startFilePicker = () => {
+    const input = document.getElementById(uploadInputId) as HTMLInputElement | null;
+    if (input) {
+      input.click();
+      return;
+    }
+
+    void openNativePicker();
+  };
+
+  const loadDemoPhoto = async (presetId?: string) => {
+    const dataUrl = createDemoPhotoDataUrl();
+    if (!dataUrl) {
+      return;
+    }
+    const asset: ImageAsset = {
+      name: 'sample-sunset.png',
+      dataUrl,
+    };
+    const ref = await saveImageAsset(asset);
+    setBatchImages([asset]);
+    setBatchImageRefs([ref]);
+    setImageAsset(asset);
+    setImageRef(ref);
+    setLastExport(null);
+    rememberImage(asset, ref);
+    markBeginnerStepComplete('choose');
+    setActiveBeginnerStep('look');
+    setActiveMobileTab('quick');
+    if (presetId) {
+      const preset = allPresets.find((item) => item.id === presetId);
+      if (preset) {
+        commitSettings((current) => ({
+          ...current,
+          ...preset.settings,
+        }), presetId);
+        markBeginnerStepComplete('look');
+      }
+    }
+    setStatus(language === 'ko' ? '샘플 사진을 불러왔습니다.' : 'Loaded the sample photo.');
+    playSound('shutter');
   };
 
   const renderAssetBlob = async (
@@ -837,10 +1187,17 @@ function App() {
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const cleanName = cleanExportName(imageAsset?.name || 'polaroid');
       const filename = `${cleanName || 'polaroid-studio'}-${Date.now()}.${format}`;
+      const exportResult = {
+        format,
+        filename,
+        width: exportMeta.width,
+        height: exportMeta.height,
+      };
 
       if (!window.electronAPI?.saveImage) {
         downloadBlob(blob, filename);
         setStatus(language === 'ko' ? `${filename} 다운로드됨` : `Downloaded ${filename}`);
+        setLastExport(exportResult);
         playSound('success');
         return;
       }
@@ -857,6 +1214,10 @@ function App() {
         setStatus(
           language === 'ko' ? `${result.filePath}에 저장됨` : `Saved to ${result.filePath}`
         );
+        setLastExport({
+          ...exportResult,
+          filename: result.filePath ?? filename,
+        });
         playSound('success');
       }
     } catch (err) {
@@ -1087,6 +1448,21 @@ function App() {
     playSound('snap');
   };
 
+  const startAnotherPhoto = () => {
+    setImageAsset(null);
+    setImageElement(null);
+    setImageRef(null);
+    setBatchImages([]);
+    setBatchImageRefs([]);
+    setLastExport(null);
+    setActiveBeginnerStep('choose');
+    setActiveMobileTab('quick');
+    setStatus(
+      language === 'ko' ? '시작하려면 사진을 가져오세요.' : 'Import a photo to begin.'
+    );
+    playSound('click');
+  };
+
   const fitCrop = () => {
     updateSetting('cropZoom', 1);
     playSound('snap');
@@ -1108,6 +1484,38 @@ function App() {
     }));
     setStatus(language === 'ko' ? '자르기 프레이밍을 자동으로 맞췄습니다.' : 'Auto matched the crop framing.');
     playSound('snap');
+  };
+
+  const autoMakeItGood = () => {
+    if (!imageElement) {
+      startFilePicker();
+      return;
+    }
+
+    const classicPreset = presets.find((preset) => preset.id === 'classic');
+    commitSettings((current) => ({
+      ...current,
+      ...(classicPreset?.settings ?? {}),
+      cropZoom: getAutoCropZoom(imageElement, current),
+      cropX: 0,
+      cropY: 0,
+      cropRotation: 0,
+      flipX: false,
+      flipY: false,
+      frameTheme: 'white',
+      overlay: 'none',
+      captionFontSize: 26,
+      watermarkOpacity: 32,
+    }), 'classic');
+    setExportSizeId('print');
+    setActiveBeginnerStep('caption');
+    setActiveMobileTab('caption');
+    setStatus(
+      language === 'ko'
+        ? '깔끔한 기본 폴라로이드 룩을 적용했습니다.'
+        : 'Applied a clean beginner-friendly Polaroid look.'
+    );
+    playSound('success');
   };
 
   const exportPresetFile = async () => {
@@ -1216,7 +1624,7 @@ function App() {
 
   const advanceMobileQuickFlow = () => {
     if (!hasImage) {
-      void openNativePicker();
+      startFilePicker();
       return;
     }
 
@@ -1227,6 +1635,47 @@ function App() {
 
     playSound('tick');
     setActiveMobileTab(nextQuickStep.id);
+  };
+
+  const selectBeginnerStep = (step: BeginnerStep) => {
+    if (step !== activeBeginnerStep) {
+      playSound('tick');
+    }
+    setActiveBeginnerStep(step);
+    if (step === 'choose') {
+      setActiveMobileTab('quick');
+    } else if (step === 'look') {
+      setActiveMobileTab('quick');
+    } else {
+      setActiveMobileTab(step);
+    }
+  };
+
+  const advanceBeginnerFlow = () => {
+    if (!hasImage) {
+      startFilePicker();
+      return;
+    }
+
+    markBeginnerStepComplete(activeBeginnerStep);
+    if (activeBeginnerStep === 'export') {
+      void exportImage('png');
+      return;
+    }
+
+    selectBeginnerStep(nextBeginnerStep.id);
+  };
+
+  const runGuideAction = (step: BeginnerStep) => {
+    selectBeginnerStep(step);
+    if (step === 'choose') {
+      startFilePicker();
+    }
+  };
+
+  const toggleBeginnerMode = () => {
+    setBeginnerMode((current) => !current);
+    playSound('tick');
   };
 
   const chooseLanguage = (nextLanguage: Language) => {
@@ -1253,6 +1702,13 @@ function App() {
       playSound('tick');
     }
     setActiveMobileTab(tab);
+    if (beginnerMode) {
+      if (tab === 'quick' || tab === 'look' || tab === 'frame') {
+        setActiveBeginnerStep('look');
+      } else {
+        setActiveBeginnerStep(tab);
+      }
+    }
   };
 
   const selectPreviewMode = (mode: 'final' | 'before' | 'split') => {
@@ -1281,6 +1737,57 @@ function App() {
     playSound('snap');
   };
 
+  const dropzoneCopy = {
+    ...t.dropzone,
+    title: hasImage ? t.dropzone.title : t.startWithPhoto,
+    chooseFiles: hasImage ? t.dropzone.chooseFiles : t.startWithPhoto,
+  };
+  const renderExportSuccessPanel = () => lastExport ? (
+    <div className={`rounded-[22px] border px-4 py-4 text-sm shadow-[0_18px_40px_rgba(28,20,12,0.08)] ${
+      darkMode
+        ? 'border-emerald-400/20 bg-emerald-950/18 text-emerald-100'
+        : 'border-emerald-200 bg-emerald-50/90 text-emerald-900'
+    }`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em]">
+            {t.exported}
+          </p>
+          <p className="mt-1 text-base font-semibold">
+            {lastExport.format.toUpperCase()} · {lastExport.width} x {lastExport.height}
+          </p>
+          <p className={`mt-1 max-w-full truncate text-xs ${darkMode ? 'text-emerald-200/75' : 'text-emerald-800/70'}`}>
+            {lastExport.filename}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+              darkMode
+                ? 'border-emerald-300/30 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/45'
+                : 'border-emerald-200 bg-white/75 text-emerald-900 hover:bg-white'
+            }`}
+            type="button"
+            onClick={copyCurrentImage}
+          >
+            {t.copyPng}
+          </button>
+          <button
+            className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+              darkMode
+                ? 'border-stone-700 bg-stone-900 text-stone-100 hover:bg-stone-800'
+                : 'border-stone-300 bg-white/75 text-stone-700 hover:bg-white'
+            }`}
+            type="button"
+            onClick={startAnotherPhoto}
+          >
+            {t.makeAnother}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey;
@@ -1296,7 +1803,7 @@ function App() {
 
       if (event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        void openNativePicker();
+        startFilePicker();
       }
 
       if (event.key.toLowerCase() === 's') {
@@ -1315,7 +1822,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [exportImage, openNativePicker, redoSettings, undoSettings]);
+  }, [exportImage, redoSettings, startFilePicker, undoSettings]);
 
   return (
     <div
@@ -1353,7 +1860,7 @@ function App() {
                   <h1 className="mt-1 text-xl font-semibold leading-tight sm:mt-2 sm:text-3xl">{t.heroTitle}</h1>
                 </div>
               </div>
-              <details className="group relative sm:hidden">
+              <details className="group relative z-[90] sm:hidden">
                 <summary aria-label="Mobile settings" className={`flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-full border text-lg font-semibold [&::-webkit-details-marker]:hidden ${
                   darkMode
                     ? 'border-stone-700 bg-stone-900 text-stone-100'
@@ -1361,7 +1868,7 @@ function App() {
                 }`}>
                   ?
                 </summary>
-                <div className={`absolute right-0 top-12 z-40 w-44 space-y-2 rounded-2xl border p-2 shadow-panel ${
+                <div className={`absolute right-0 top-12 z-[90] w-44 space-y-2 rounded-2xl border p-2 shadow-panel ${
                   darkMode ? 'border-stone-700 bg-stone-950' : 'border-stone-200 bg-white'
                 }`}>
                   <div className={`grid grid-cols-2 gap-1 rounded-full border p-1 text-xs ${darkMode ? 'border-stone-700 bg-stone-900' : 'border-stone-300 bg-white/70'}`}>
@@ -1411,6 +1918,46 @@ function App() {
                   >
                     {soundEnabled ? t.soundOn : t.soundOff}
                   </button>
+                  <div className={`grid grid-cols-2 gap-1 rounded-full border p-1 text-xs ${darkMode ? 'border-stone-700 bg-stone-900' : 'border-stone-300 bg-white/70'}`}>
+                    <button
+                      className={`rounded-full px-2 py-1.5 font-semibold transition ${
+                        beginnerMode
+                          ? darkMode
+                            ? 'bg-accent text-white'
+                            : 'bg-ink text-white'
+                          : darkMode
+                            ? 'text-stone-300 hover:bg-stone-800'
+                            : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        if (!beginnerMode) {
+                          toggleBeginnerMode();
+                        }
+                      }}
+                    >
+                      {t.beginnerMode}
+                    </button>
+                    <button
+                      className={`rounded-full px-2 py-1.5 font-semibold transition ${
+                        !beginnerMode
+                          ? darkMode
+                            ? 'bg-accent text-white'
+                            : 'bg-ink text-white'
+                          : darkMode
+                            ? 'text-stone-300 hover:bg-stone-800'
+                            : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                      type="button"
+                      onClick={() => {
+                        if (beginnerMode) {
+                          toggleBeginnerMode();
+                        }
+                      }}
+                    >
+                      {t.advancedMode}
+                    </button>
+                  </div>
                 </div>
               </details>
               <div className="hidden flex-col gap-2 sm:flex">
@@ -1466,14 +2013,83 @@ function App() {
             <p className={`mt-2 hidden text-sm leading-6 sm:block ${bodyTextClass}`}>
               {t.heroDescription}
             </p>
+            {beginnerMode && !hasImage ? null : (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  className={`rounded-full px-5 py-3 text-sm font-semibold text-white transition ${
+                    darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
+                  }`}
+                  type="button"
+                  onClick={hasImage ? () => selectBeginnerStep('look') : startFilePicker}
+                >
+                  {hasImage ? t.pickALook : t.startWithPhoto}
+                </button>
+                <button
+                  className={`rounded-full border px-5 py-3 text-sm font-semibold transition ${
+                    darkMode
+                      ? 'border-stone-700 bg-stone-900 text-stone-100 hover:bg-stone-800'
+                      : 'border-stone-300 bg-white/70 text-stone-700 hover:bg-white'
+                  }`}
+                  type="button"
+                  onClick={() => loadDemoPhoto()}
+                >
+                  {t.tryDemoPhoto}
+                </button>
+              </div>
+            )}
+            <div className={`mt-3 grid grid-cols-2 gap-1 rounded-full border p-1 text-xs ${darkMode ? 'border-stone-700 bg-stone-900' : 'border-stone-300 bg-white/70'}`}>
+              <button
+                className={`rounded-full px-3 py-2 font-semibold transition ${
+                  beginnerMode
+                    ? darkMode
+                      ? 'bg-accent text-white'
+                      : 'bg-ink text-white'
+                    : darkMode
+                      ? 'text-stone-300 hover:bg-stone-800'
+                      : 'text-stone-600 hover:bg-stone-100'
+                }`}
+                type="button"
+                onClick={() => {
+                  if (!beginnerMode) {
+                    toggleBeginnerMode();
+                  }
+                }}
+              >
+                {t.beginnerMode}
+              </button>
+              <button
+                className={`rounded-full px-3 py-2 font-semibold transition ${
+                  !beginnerMode
+                    ? darkMode
+                      ? 'bg-accent text-white'
+                      : 'bg-ink text-white'
+                    : darkMode
+                      ? 'text-stone-300 hover:bg-stone-800'
+                      : 'text-stone-600 hover:bg-stone-100'
+                }`}
+                type="button"
+                onClick={() => {
+                  if (beginnerMode) {
+                    toggleBeginnerMode();
+                  }
+                }}
+              >
+                {t.advancedMode}
+              </button>
+            </div>
+            <p className={`mt-2 text-xs leading-5 ${mutedTextClass}`}>
+              {t.modeHint}
+            </p>
           </div>
 
             <Dropzone
+              inputId={uploadInputId}
               onSelectFiles={importFirstFile}
               onOpenNativeDialog={openNativePicker}
               darkMode={darkMode}
-              copy={t.dropzone}
+              copy={dropzoneCopy}
               compact={hasImage}
+              inputOnly={beginnerMode && !hasImage}
             />
 
           {batchImages.length > 1 ? (
@@ -1526,7 +2142,7 @@ function App() {
             </div>
           ) : null}
 
-          <div className={`hidden space-y-5 rounded-[28px] border p-4 lg:block ${surfaceClass}`}>
+          <div className={`hidden space-y-5 rounded-[28px] border p-4 ${beginnerMode ? 'lg:hidden' : 'lg:block'} ${surfaceClass}`}>
             <div>
               <h2 className={`text-sm font-semibold uppercase tracking-[0.24em] ${mutedTextClass}`}>
                 {t.crop}
@@ -1616,7 +2232,7 @@ function App() {
             </button>
           </div>
 
-          <div className={`hidden space-y-5 rounded-[28px] border p-4 lg:block ${surfaceClass}`}>
+          <div className={`hidden space-y-5 rounded-[28px] border p-4 ${beginnerMode ? 'lg:hidden' : 'lg:block'} ${surfaceClass}`}>
             <div>
               <h2 className={`text-sm font-semibold uppercase tracking-[0.24em] ${mutedTextClass}`}>
                 {t.toneFrame}
@@ -1624,6 +2240,7 @@ function App() {
             </div>
             <SliderControl
               label={t.brightness}
+              tooltip={t.controlTooltips.brightness}
               value={settings.brightness}
               min={70}
               max={140}
@@ -1633,6 +2250,7 @@ function App() {
             />
             <SliderControl
               label={t.contrast}
+              tooltip={t.controlTooltips.contrast}
               value={settings.contrast}
               min={60}
               max={130}
@@ -1642,6 +2260,7 @@ function App() {
             />
             <SliderControl
               label={t.saturation}
+              tooltip={t.controlTooltips.saturation}
               value={settings.saturation}
               min={40}
               max={140}
@@ -1651,6 +2270,7 @@ function App() {
             />
             <SliderControl
               label={t.warmth}
+              description={t.sliderHelp.warmth}
               value={settings.warmth}
               min={0}
               max={45}
@@ -1659,6 +2279,7 @@ function App() {
             />
             <SliderControl
               label={t.fade}
+              description={t.sliderHelp.fade}
               value={settings.fade}
               min={0}
               max={45}
@@ -1667,6 +2288,7 @@ function App() {
             />
             <SliderControl
               label={t.grain}
+              description={t.sliderHelp.grain}
               value={settings.grain}
               min={0}
               max={30}
@@ -1675,6 +2297,7 @@ function App() {
             />
             <SliderControl
               label={t.vignette}
+              description={t.sliderHelp.vignette}
               value={settings.vignette}
               min={0}
               max={35}
@@ -1726,6 +2349,7 @@ function App() {
             </label>
             <SliderControl
               label={t.topBorder}
+              tooltip={t.controlTooltips.border}
               value={settings.borderTop}
               min={2}
               max={30}
@@ -1735,6 +2359,7 @@ function App() {
             />
             <SliderControl
               label={t.sideBorder}
+              tooltip={t.controlTooltips.border}
               value={settings.borderSide}
               min={2}
               max={30}
@@ -1744,6 +2369,7 @@ function App() {
             />
             <SliderControl
               label={t.bottomBorder}
+              tooltip={t.controlTooltips.border}
               value={settings.borderBottom}
               min={8}
               max={50}
@@ -1753,6 +2379,7 @@ function App() {
             />
             <SliderControl
               label={t.shadow}
+              tooltip={t.controlTooltips.shadow}
               value={settings.shadowIntensity}
               min={0}
               max={100}
@@ -1761,6 +2388,7 @@ function App() {
             />
             <SliderControl
               label={t.rotation}
+              tooltip={t.controlTooltips.rotation}
               value={settings.rotation}
               min={-12}
               max={12}
@@ -1775,6 +2403,7 @@ function App() {
           <div className={`sticky top-0 z-30 -mx-4 space-y-2 px-4 pb-3 pt-2 backdrop-blur-xl transition-all lg:static lg:mx-0 lg:space-y-3 lg:p-0 lg:backdrop-blur-0 ${
             hasImage && mobilePreviewCompact ? 'pt-1' : ''
           }`}>
+          {beginnerMode && !hasImage ? null : (
           <div className={`flex flex-wrap items-center justify-between gap-3 rounded-[22px] border px-3 py-3 backdrop-blur-xl sm:rounded-[28px] sm:px-5 sm:py-4 ${shellClass}`}>
             <div className="flex flex-wrap gap-2">
               <button
@@ -1828,6 +2457,7 @@ function App() {
               ))}
             </div>
           </div>
+          )}
           <PreviewStage
             image={imageElement}
             settings={settings}
@@ -1840,6 +2470,10 @@ function App() {
             darkMode={darkMode}
             compact={hasImage && mobilePreviewCompact}
             seed={renderSeed}
+            splitLabels={{
+              before: t.previewModes.before,
+              after: t.previewModes.final,
+            }}
           />
           </div>
 
@@ -1873,9 +2507,11 @@ function App() {
               <div className="space-y-4">
                 <div>
                   <p className={`text-xs uppercase tracking-[0.18em] ${mutedTextClass}`}>
-                    {t.quickMode}
+                    {beginnerMode ? t.guidedWorkflow : t.quickMode}
                   </p>
-                  <h2 className="mt-1 text-lg font-semibold">{t.quickPrompt}</h2>
+                  <h2 className="mt-1 text-lg font-semibold">
+                    {hasImage ? t.quickPrompt : t.sampleLooks}
+                  </h2>
                 </div>
                 <div className="grid grid-cols-4 gap-1">
                   {quickFlow.map((step, index) => (
@@ -1903,8 +2539,15 @@ function App() {
                       key={preset.id}
                       preset={preset}
                       active={activePresetId === preset.id}
-                      onClick={() => applyPreset(preset.id)}
+                      onClick={() =>
+                        hasImage ? applyPreset(preset.id) : loadDemoPhoto(preset.id)
+                      }
                       darkMode={darkMode}
+                      previewSrc={
+                        hasImage
+                          ? presetPreviewUrls[preset.id]
+                          : samplePresetPreviewUrls[preset.id]
+                      }
                     />
                   ))}
                 </div>
@@ -1912,18 +2555,18 @@ function App() {
                   <button className={secondaryButtonClass} type="button" onClick={autoFitCrop}>
                     {t.autoFit}
                   </button>
-                  <button className={secondaryButtonClass} type="button" onClick={randomizeLook}>
-                    {t.randomize}
+                  <button className={secondaryButtonClass} type="button" onClick={beginnerMode ? autoMakeItGood : randomizeLook}>
+                    {beginnerMode ? t.autoMakeGood : t.randomize}
                   </button>
                   <button
                     className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${
                       darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
                     }`}
                     onClick={advanceMobileQuickFlow}
-                    disabled={!hasImage || busy}
+                    disabled={busy}
                     type="button"
                   >
-                    {t.next}
+                    {hasImage ? t.next : t.startWithPhoto}
                   </button>
                 </div>
               </div>
@@ -1941,16 +2584,24 @@ function App() {
                 <SliderControl label={t.zoom} value={settings.cropZoom} min={1} max={3} step={0.05} onChange={(value) => updateSetting('cropZoom', value)} suffix="x" darkMode={darkMode} />
                 <SliderControl label={t.horizontal} value={settings.cropX} min={-100} max={100} onChange={(value) => updateSetting('cropX', value)} darkMode={darkMode} />
                 <SliderControl label={t.vertical} value={settings.cropY} min={-100} max={100} onChange={(value) => updateSetting('cropY', value)} darkMode={darkMode} />
-                <SliderControl label={t.cropRotation} value={settings.cropRotation} min={-45} max={45} onChange={(value) => updateSetting('cropRotation', value)} suffix="deg" darkMode={darkMode} />
+                {!beginnerMode ? (
+                  <SliderControl label={t.cropRotation} value={settings.cropRotation} min={-45} max={45} onChange={(value) => updateSetting('cropRotation', value)} suffix="deg" darkMode={darkMode} />
+                ) : null}
                 <div className="grid grid-cols-2 gap-2">
-                  {[
-                    [t.autoFit, autoFitCrop],
-                    [t.fit, fitCrop],
-                    [t.fill, fillCrop],
-                    [t.flipH, () => toggleCropFlip('flipX')],
-                    [t.flipV, () => toggleCropFlip('flipY')],
-                    [t.resetCrop, resetCrop],
-                  ].map(([label, handler]) => (
+                  {(beginnerMode
+                    ? [
+                        [t.autoFit, autoFitCrop],
+                        [t.resetCrop, resetCrop],
+                      ]
+                    : [
+                        [t.autoFit, autoFitCrop],
+                        [t.fit, fitCrop],
+                        [t.fill, fillCrop],
+                        [t.flipH, () => toggleCropFlip('flipX')],
+                        [t.flipV, () => toggleCropFlip('flipY')],
+                        [t.resetCrop, resetCrop],
+                      ]
+                  ).map(([label, handler]) => (
                     <button key={label as string} className={secondaryButtonClass} type="button" onClick={handler as () => void}>
                       {label as string}
                     </button>
@@ -1964,7 +2615,7 @@ function App() {
                 <div className="grid gap-2">
                   {allPresets.map((preset) => (
                     <div key={preset.id} className="relative">
-                      <PresetButton preset={preset} active={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} darkMode={darkMode} />
+                      <PresetButton preset={preset} active={activePresetId === preset.id} onClick={() => applyPreset(preset.id)} darkMode={darkMode} previewSrc={presetPreviewUrls[preset.id]} />
                       {preset.id.startsWith('custom-') ? (
                         <button className={`absolute right-2 top-2 rounded-full px-2 py-1 text-[11px] ${darkMode ? 'bg-stone-950/80 text-stone-300' : 'bg-white/80 text-stone-500'}`} type="button" onClick={() => deleteCustomPreset(preset.id)}>
                           {t.remove}
@@ -1982,10 +2633,10 @@ function App() {
                 <SliderControl label={t.brightness} value={settings.brightness} min={70} max={140} onChange={(value) => updateSetting('brightness', value)} suffix="%" darkMode={darkMode} />
                 <SliderControl label={t.contrast} value={settings.contrast} min={60} max={130} onChange={(value) => updateSetting('contrast', value)} suffix="%" darkMode={darkMode} />
                 <SliderControl label={t.saturation} value={settings.saturation} min={40} max={140} onChange={(value) => updateSetting('saturation', value)} suffix="%" darkMode={darkMode} />
-                <SliderControl label={t.warmth} value={settings.warmth} min={0} max={45} onChange={(value) => updateSetting('warmth', value)} darkMode={darkMode} />
-                <SliderControl label={t.fade} value={settings.fade} min={0} max={45} onChange={(value) => updateSetting('fade', value)} darkMode={darkMode} />
-                <SliderControl label={t.grain} value={settings.grain} min={0} max={30} onChange={(value) => updateSetting('grain', value)} darkMode={darkMode} />
-                <SliderControl label={t.vignette} value={settings.vignette} min={0} max={35} onChange={(value) => updateSetting('vignette', value)} darkMode={darkMode} />
+                <SliderControl label={t.warmth} description={t.sliderHelp.warmth} value={settings.warmth} min={0} max={45} onChange={(value) => updateSetting('warmth', value)} darkMode={darkMode} />
+                <SliderControl label={t.fade} description={t.sliderHelp.fade} value={settings.fade} min={0} max={45} onChange={(value) => updateSetting('fade', value)} darkMode={darkMode} />
+                <SliderControl label={t.grain} description={t.sliderHelp.grain} value={settings.grain} min={0} max={30} onChange={(value) => updateSetting('grain', value)} darkMode={darkMode} />
+                <SliderControl label={t.vignette} description={t.sliderHelp.vignette} value={settings.vignette} min={0} max={35} onChange={(value) => updateSetting('vignette', value)} darkMode={darkMode} />
               </div>
             ) : null}
 
@@ -2065,12 +2716,16 @@ function App() {
                   ))}
                 </div>
                 <SliderControl label={t.captionSize} value={settings.captionFontSize} min={16} max={42} onChange={(value) => updateSetting('captionFontSize', value)} suffix="px" darkMode={darkMode} />
-                <SliderControl label={t.softness} value={settings.blur} min={0} max={2} step={0.1} onChange={(value) => updateSetting('blur', value)} suffix="px" darkMode={darkMode} />
-                <label className="block space-y-2">
-                  <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.watermark}</span>
-                  <input className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`} value={settings.watermarkText} onChange={(event) => updateSetting('watermarkText', event.target.value)} placeholder={t.optionalSignature} />
-                </label>
-                <SliderControl label={t.watermarkOpacity} value={settings.watermarkOpacity} min={0} max={100} onChange={(value) => updateSetting('watermarkOpacity', value)} suffix="%" darkMode={darkMode} />
+                {!beginnerMode ? (
+                  <>
+                    <SliderControl label={t.softness} tooltip={t.controlTooltips.softness} value={settings.blur} min={0} max={2} step={0.1} onChange={(value) => updateSetting('blur', value)} suffix="px" darkMode={darkMode} />
+                    <label className="block space-y-2">
+                      <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.watermark}</span>
+                      <input className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`} value={settings.watermarkText} onChange={(event) => updateSetting('watermarkText', event.target.value)} placeholder={t.optionalSignature} />
+                    </label>
+                    <SliderControl label={t.watermarkOpacity} tooltip={t.controlTooltips.watermark} value={settings.watermarkOpacity} min={0} max={100} onChange={(value) => updateSetting('watermarkOpacity', value)} suffix="%" darkMode={darkMode} />
+                  </>
+                ) : null}
               </div>
             ) : null}
 
@@ -2081,21 +2736,84 @@ function App() {
                   <div className="grid grid-cols-3 gap-2">
                     {exportSizeOptions.map((option) => (
                       <button key={option.id} className={`${secondaryButtonClass} ${exportSizeId === option.id ? darkMode ? '!border-accent !bg-accent/15 !text-orange-200' : '!border-accent !bg-accentSoft !text-accent' : ''}`} type="button" onClick={() => selectExportSize(option.id)}>
-                        {t.exportSizes[option.id as keyof typeof t.exportSizes]}
+                        <span className="block">{t.exportSizes[option.id as keyof typeof t.exportSizes]}</span>
+                        <span className={`mt-1 block text-[11px] font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                          {t.exportSizeDescriptions[option.id as keyof typeof t.exportSizeDescriptions]}
+                        </span>
                       </button>
                     ))}
+                  </div>
+                </div>
+                <div className={`grid grid-cols-[86px_1fr] gap-4 rounded-2xl border p-3 ${darkMode ? 'border-stone-800 bg-stone-950/35' : 'border-stone-200 bg-stone-50/70'}`}>
+                  <div className={`flex min-h-24 items-center justify-center rounded-xl ${darkMode ? 'bg-stone-950/70' : 'bg-white/80'}`}>
+                    {exportPreviewUrl ? (
+                      <img
+                        className="max-h-24 w-full object-contain drop-shadow-[0_12px_18px_rgba(28,20,12,0.16)]"
+                        src={exportPreviewUrl}
+                        alt=""
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex min-w-0 flex-col justify-center">
+                    <p className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${mutedTextClass}`}>
+                      {t.exportReady}
+                    </p>
+                    <p className="mt-1 truncate text-sm font-semibold">
+                      PNG · {t.exportSizes[exportSizeId as keyof typeof t.exportSizes]}
+                    </p>
+                    <p className={`mt-1 text-xs ${mutedTextClass}`}>
+                      {exportMeta.width} x {exportMeta.height}
+                    </p>
                   </div>
                 </div>
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
                   {t.exportPreview}: {exportMeta.width} x {exportMeta.height}px
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'}`} onClick={() => exportImage('png')} disabled={!hasImage || busy} type="button">{t.exportPng}</button>
-                  <button className={secondaryButtonClass} onClick={() => exportImage('jpg')} disabled={!hasImage || busy} type="button">{t.exportJpg}</button>
-                  <button className={secondaryButtonClass} type="button" disabled={!hasImage || busy} onClick={copyCurrentImage}>{t.copyPng}</button>
-                  <button className={secondaryButtonClass} type="button" disabled={batchImages.length === 0 || busy} onClick={() => exportBatch('png')}>{t.batchPng}</button>
-                  <button className={secondaryButtonClass} type="button" disabled={batchImages.length === 0 || busy} onClick={() => exportBatch('jpg')}>{t.batchJpg}</button>
+                <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
+                  <div className={`font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
+                    {t.exportChecklist}
+                  </div>
+                  <div className="mt-3 grid gap-2">
+                    {exportChecklist.map((item) => (
+                      <div key={item.label} className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
+                          item.done
+                            ? darkMode
+                              ? 'bg-accent text-white'
+                              : 'bg-ink text-white'
+                            : darkMode
+                              ? 'bg-stone-800 text-stone-500'
+                              : 'bg-stone-200 text-stone-500'
+                        }`}>
+                          {item.done ? '✓' : ''}
+                        </span>
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'}`} onClick={() => exportImage('png')} disabled={!hasImage || busy} type="button">
+                    <span className="block">{t.exportPng}</span>
+                    <span className="mt-1 block text-[11px] font-normal text-white/75">
+                      {t.formatDescriptions.png}
+                    </span>
+                  </button>
+                  <button className={secondaryButtonClass} onClick={() => exportImage('jpg')} disabled={!hasImage || busy} type="button">
+                    <span className="block">{t.exportJpg}</span>
+                    <span className={`mt-1 block text-[11px] font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                      {t.formatDescriptions.jpg}
+                    </span>
+                  </button>
+                  {!beginnerMode ? (
+                    <>
+                      <button className={secondaryButtonClass} type="button" disabled={!hasImage || busy} onClick={copyCurrentImage}>{t.copyPng}</button>
+                      <button className={secondaryButtonClass} type="button" disabled={batchImages.length === 0 || busy} onClick={() => exportBatch('png')}>{t.batchPng}</button>
+                      <button className={secondaryButtonClass} type="button" disabled={batchImages.length === 0 || busy} onClick={() => exportBatch('jpg')}>{t.batchJpg}</button>
+                    </>
+                  ) : null}
+                </div>
+                {renderExportSuccessPanel()}
                 {batchProgress ? (
                   <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
                     <div className="flex items-center justify-between gap-3">
@@ -2128,7 +2846,318 @@ function App() {
             ) : null}
           </section>
 
-          <div className="hidden gap-4 lg:grid lg:grid-cols-[1.1fr_0.9fr]">
+          <section className={`hidden rounded-[28px] border p-5 backdrop-blur-xl ${beginnerMode ? 'lg:block' : 'lg:hidden'} ${shellClass}`}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className={`text-xs uppercase tracking-[0.24em] ${mutedTextClass}`}>
+                  {t.guidedWorkflow}
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold">
+                  {beginnerSteps[activeBeginnerStepIndex].label}
+                </h2>
+                <p className={`mt-2 max-w-2xl text-sm leading-6 ${bodyTextClass}`}>
+                  {beginnerSteps[activeBeginnerStepIndex].description}
+                </p>
+              </div>
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                  darkMode
+                    ? 'border-stone-700 bg-stone-900 text-stone-100 hover:bg-stone-800'
+                    : 'border-stone-300 bg-white/70 text-stone-700 hover:bg-white'
+                }`}
+                type="button"
+                onClick={toggleBeginnerMode}
+              >
+                {t.advancedMode}
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-5 gap-2">
+              {beginnerSteps.map((step, index) => (
+                <button
+                  key={step.id}
+                  className={`rounded-2xl border px-3 py-3 text-left transition ${
+                    activeBeginnerStep === step.id
+                      ? darkMode
+                        ? 'border-accent bg-accent/15 text-orange-200'
+                        : 'border-accent bg-accentSoft text-accent'
+                    : completedBeginnerSteps.includes(step.id) ||
+                        index < activeBeginnerStepIndex
+                        ? darkMode
+                          ? 'border-stone-700 bg-stone-900 text-stone-200'
+                          : 'border-stone-300 bg-white text-stone-700'
+                        : darkMode
+                          ? 'border-stone-800 text-stone-500'
+                          : 'border-stone-200 text-stone-500'
+                  }`}
+                  type="button"
+                  onClick={() => selectBeginnerStep(step.id)}
+                >
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.16em]">
+                    {completedBeginnerSteps.includes(step.id) ? '✓' : index + 1}
+                  </span>
+                  <span className="mt-1 block text-sm font-semibold">{step.label}</span>
+                </button>
+              ))}
+            </div>
+
+            <div key={activeBeginnerStep} className="premium-step mt-6">
+              {activeBeginnerStep === 'choose' ? (
+                <div className={`rounded-[24px] border p-5 ${surfaceClass}`}>
+                  <p className={`text-sm leading-6 ${bodyTextClass}`}>{t.beginWithPhotoHint}</p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                      className={`rounded-2xl px-5 py-3 text-sm font-semibold text-white transition ${
+                        darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
+                      }`}
+                      type="button"
+                      onClick={startFilePicker}
+                    >
+                      {t.startWithPhoto}
+                    </button>
+                    <button className={secondaryButtonClass} type="button" onClick={() => loadDemoPhoto()}>
+                      {t.tryDemoPhoto}
+                    </button>
+                  </div>
+                  <div className="mt-6">
+                    <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
+                      {t.sampleLooks}
+                    </div>
+                    <p className={`mt-1 text-sm leading-6 ${bodyTextClass}`}>
+                      {t.sampleLooksDescription}
+                    </p>
+                    <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                      {allPresets.slice(0, 5).map((preset) => (
+                        <button
+                          key={preset.id}
+                          className={`group overflow-hidden rounded-2xl border text-left transition ${
+                            darkMode
+                              ? 'border-stone-700 bg-stone-900/65 hover:border-stone-500'
+                              : 'border-stone-200 bg-white/82 hover:border-stone-300 hover:bg-white'
+                          }`}
+                          type="button"
+                          onClick={() => loadDemoPhoto(preset.id)}
+                          title={`${t.tryThisLook}: ${preset.name}`}
+                        >
+                          <span className={`flex h-36 items-center justify-center ${
+                            darkMode ? 'bg-stone-950/35' : 'bg-stone-50/80'
+                          }`}>
+                            {samplePresetPreviewUrls[preset.id] ? (
+                              <span className={`flex h-28 w-20 rotate-[-2deg] items-center justify-center rounded-[11px] p-1 shadow-[0_16px_28px_rgba(28,20,12,0.18)] transition group-hover:-translate-y-1 ${
+                                darkMode ? 'bg-stone-100' : 'bg-white'
+                              }`}>
+                                <img
+                                  className="h-full w-full object-contain"
+                                  src={samplePresetPreviewUrls[preset.id]}
+                                  alt=""
+                                />
+                              </span>
+                            ) : (
+                              <span className={`h-28 w-20 rounded-[11px] ${darkMode ? 'bg-stone-800' : 'bg-stone-100'}`} />
+                            )}
+                          </span>
+                          <span className="block px-3 py-3">
+                            <span className={`block text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
+                              {preset.name}
+                            </span>
+                            <span className={`mt-1 block text-xs ${mutedTextClass}`}>
+                              {t.tryThisLook}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeBeginnerStep === 'look' ? (
+                <div className="grid gap-4 xl:grid-cols-[1fr_240px]">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {allPresets.map((preset) => (
+                      <PresetButton
+                        key={preset.id}
+                        preset={preset}
+                        active={activePresetId === preset.id}
+                        onClick={() => applyPreset(preset.id)}
+                        darkMode={darkMode}
+                        previewSrc={presetPreviewUrls[preset.id]}
+                      />
+                    ))}
+                  </div>
+                  <div className={`rounded-[24px] border p-4 ${surfaceClass}`}>
+                    <button
+                      className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white transition ${
+                        darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
+                      }`}
+                      type="button"
+                      onClick={autoMakeItGood}
+                    >
+                      {t.autoMakeGood}
+                    </button>
+                    <p className={`mt-3 text-sm leading-6 ${bodyTextClass}`}>
+                      {t.autoMakeGoodDescription}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeBeginnerStep === 'crop' ? (
+                <div className={`grid gap-5 rounded-[24px] border p-5 ${surfaceClass}`}>
+                  {cropRatioMeta ? (
+                    <p className={`text-sm leading-6 ${cropRatioMeta.isSquare ? bodyTextClass : darkMode ? 'text-orange-200' : 'text-amber-700'}`}>
+                      {cropRatioMeta.isSquare
+                        ? t.cropSquare
+                        : t.cropDifferent(cropRatioMeta.originalRatio)}
+                    </p>
+                  ) : null}
+                  <div className="grid gap-5 md:grid-cols-3">
+                    <SliderControl label={t.zoom} value={settings.cropZoom} min={1} max={3} step={0.05} onChange={(value) => updateSetting('cropZoom', value)} suffix="x" darkMode={darkMode} />
+                    <SliderControl label={t.horizontal} value={settings.cropX} min={-100} max={100} onChange={(value) => updateSetting('cropX', value)} darkMode={darkMode} />
+                    <SliderControl label={t.vertical} value={settings.cropY} min={-100} max={100} onChange={(value) => updateSetting('cropY', value)} darkMode={darkMode} />
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button className={secondaryButtonClass} type="button" onClick={autoFitCrop}>{t.autoFit}</button>
+                    <button className={secondaryButtonClass} type="button" onClick={resetCrop}>{t.resetCrop}</button>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeBeginnerStep === 'caption' ? (
+                <div className={`grid gap-4 rounded-[24px] border p-5 md:grid-cols-[1fr_240px] ${surfaceClass}`}>
+                  <label className="block space-y-2">
+                    <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.captionText}</span>
+                    <textarea
+                      className={`min-h-32 w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`}
+                      placeholder={t.captionPlaceholder}
+                      value={settings.captionText}
+                      onChange={(event) => updateSetting('captionText', event.target.value)}
+                    />
+                  </label>
+                  <div className="space-y-3">
+                    <label className="block space-y-2">
+                      <span className={`text-sm ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{t.captionFont}</span>
+                      <select className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none transition ${fieldClass}`} value={settings.captionFont} onChange={(event) => updateSetting('captionFont', event.target.value)}>
+                        {captionFonts.map((font) => (
+                          <option key={font.id} value={font.id}>{t.captionFonts[font.id as keyof typeof t.captionFonts]}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className={secondaryButtonClass} type="button" onClick={() => updateSetting('captionText', new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date()))}>{t.insertDate}</button>
+                    <SliderControl label={t.captionSize} value={settings.captionFontSize} min={16} max={42} onChange={(value) => updateSetting('captionFontSize', value)} suffix="px" darkMode={darkMode} />
+                  </div>
+                </div>
+              ) : null}
+
+              {activeBeginnerStep === 'export' ? (
+                <div className={`rounded-[24px] p-5 ${beginnerMode ? 'border-0 bg-transparent shadow-none' : `border ${surfaceClass}`}`}>
+                  <div className={`mb-5 grid gap-5 rounded-[28px] border p-5 ${surfaceClass} md:grid-cols-[220px_1fr]`}>
+                    <div className={`flex min-h-48 items-center justify-center rounded-[22px] ${darkMode ? 'bg-stone-950/55' : 'bg-stone-50/80'}`}>
+                      {exportPreviewUrl ? (
+                        <img
+                          className="max-h-56 w-full object-contain drop-shadow-[0_20px_30px_rgba(28,20,12,0.18)]"
+                          src={exportPreviewUrl}
+                          alt=""
+                        />
+                      ) : null}
+                    </div>
+                    <div className="flex flex-col justify-center">
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${mutedTextClass}`}>
+                        {t.exportReady}
+                      </p>
+                      <h3 className="mt-2 text-2xl font-semibold">
+                        PNG · {t.exportSizes[exportSizeId as keyof typeof t.exportSizes]} · {exportMeta.width} x {exportMeta.height}
+                      </h3>
+                      <p className={`mt-3 text-sm leading-6 ${bodyTextClass}`}>
+                        {t.formatDescriptions.png}. {t.exportSizeDescriptions[exportSizeId as keyof typeof t.exportSizeDescriptions]}.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {exportSizeOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                          exportSizeId === option.id
+                            ? darkMode
+                              ? 'border-accent bg-accent/15 text-orange-200'
+                              : 'border-accent bg-accentSoft text-accent'
+                            : darkMode
+                              ? 'border-stone-700 bg-stone-900 text-stone-100 hover:bg-stone-800'
+                              : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-50'
+                        }`}
+                        type="button"
+                        onClick={() => selectExportSize(option.id)}
+                      >
+                        <span className="block">{t.exportSizes[option.id as keyof typeof t.exportSizes]}</span>
+                        <span className={`mt-1 block text-xs font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                          {t.exportSizeDescriptions[option.id as keyof typeof t.exportSizeDescriptions]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
+                    {t.exportPreview}: {exportMeta.width} x {exportMeta.height}px
+                  </div>
+                  <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${darkMode ? 'border-stone-800 bg-stone-900/80 text-stone-300' : 'border-stone-200 bg-stone-50 text-stone-600'}`}>
+                    <div className={`font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>
+                      {t.exportChecklist}
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      {exportChecklist.map((item) => (
+                        <div key={item.label} className="flex items-center gap-2">
+                          <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
+                            item.done
+                              ? darkMode
+                                ? 'bg-accent text-white'
+                                : 'bg-ink text-white'
+                              : darkMode
+                                ? 'bg-stone-800 text-stone-500'
+                                : 'bg-stone-200 text-stone-500'
+                          }`}>
+                            {item.done ? '✓' : ''}
+                          </span>
+                          <span>{item.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <button
+                      className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'}`}
+                      onClick={() => exportImage('png')}
+                      disabled={!hasImage || busy}
+                      type="button"
+                    >
+                      <span className="block">{t.exportPng}</span>
+                      <span className="mt-1 block text-[11px] font-normal text-white/75">{t.formatDescriptions.png}</span>
+                    </button>
+                    <button className={secondaryButtonClass} onClick={() => exportImage('jpg')} disabled={!hasImage || busy} type="button">
+                      <span className="block">{t.exportJpg}</span>
+                      <span className={`mt-1 block text-[11px] font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>{t.formatDescriptions.jpg}</span>
+                    </button>
+                  </div>
+                  {lastExport ? <div className="mt-4">{renderExportSuccessPanel()}</div> : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <div className={`text-sm ${mutedTextClass}`}>{busy ? t.working : status}</div>
+              <button
+                className={`rounded-2xl px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${
+                  darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
+                }`}
+                type="button"
+                disabled={busy}
+                onClick={advanceBeginnerFlow}
+              >
+                {nextBeginnerCtaLabel}
+              </button>
+            </div>
+          </section>
+
+          <div className={`hidden gap-4 ${beginnerMode ? 'lg:hidden' : 'lg:grid lg:grid-cols-[1.1fr_0.9fr]'}`}>
             <section className={`rounded-[28px] border p-5 backdrop-blur-xl ${shellClass}`}>
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -2211,6 +3240,7 @@ function App() {
                       active={activePresetId === preset.id}
                       onClick={() => applyPreset(preset.id)}
                       darkMode={darkMode}
+                      previewSrc={presetPreviewUrls[preset.id]}
                     />
                     {preset.id.startsWith('custom-') ? (
                       <button
@@ -2353,6 +3383,7 @@ function App() {
                 />
                 <SliderControl
                   label={t.softness}
+                  tooltip={t.controlTooltips.softness}
                   value={settings.blur}
                   min={0}
                   max={2}
@@ -2372,6 +3403,7 @@ function App() {
                 </label>
                 <SliderControl
                   label={t.watermarkOpacity}
+                  tooltip={t.controlTooltips.watermark}
                   value={settings.watermarkOpacity}
                   min={0}
                   max={100}
@@ -2397,7 +3429,10 @@ function App() {
                         type="button"
                         onClick={() => selectExportSize(option.id)}
                       >
-                        {t.exportSizes[option.id as keyof typeof t.exportSizes]}
+                        <span className="block">{t.exportSizes[option.id as keyof typeof t.exportSizes]}</span>
+                        <span className={`mt-1 block text-[11px] font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                          {t.exportSizeDescriptions[option.id as keyof typeof t.exportSizeDescriptions]}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -2414,7 +3449,10 @@ function App() {
                     disabled={!hasImage || busy}
                     type="button"
                   >
-                    {t.exportPng}
+                    <span className="block">{t.exportPng}</span>
+                    <span className="mt-1 block text-[11px] font-normal text-white/75">
+                      {t.formatDescriptions.png}
+                    </span>
                   </button>
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -2426,7 +3464,10 @@ function App() {
                     disabled={!hasImage || busy}
                     type="button"
                   >
-                    {t.exportJpg}
+                    <span className="block">{t.exportJpg}</span>
+                    <span className={`mt-1 block text-[11px] font-normal ${darkMode ? 'text-stone-400' : 'text-stone-500'}`}>
+                      {t.formatDescriptions.jpg}
+                    </span>
                   </button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -2456,6 +3497,7 @@ function App() {
                     {t.dragPngOut}
                   </button>
                 </div>
+                {renderExportSuccessPanel()}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -2539,11 +3581,25 @@ function App() {
           <div className={`space-y-3 rounded-[28px] border p-4 ${surfaceClass}`}>
             <div className={`text-sm font-semibold ${darkMode ? 'text-stone-100' : 'text-stone-700'}`}>{t.howToTitle}</div>
             <ol className={`space-y-3 text-sm leading-6 ${bodyTextClass}`}>
-              {t.guideSteps.map(([title, description]) => (
+              {t.guideSteps.map(([title, description], index) => (
                 <li key={title}>
-                  <span className={`font-semibold ${darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{title}</span>
-                  <br />
-                  {description}
+                  <button
+                    className={`w-full rounded-2xl border px-3 py-2 text-left transition ${
+                      activeBeginnerStep === beginnerStepIds[index]
+                        ? darkMode
+                          ? 'border-accent bg-accent/15 text-orange-200'
+                          : 'border-accent bg-accentSoft text-accent'
+                        : darkMode
+                          ? 'border-stone-700 text-stone-300 hover:bg-stone-900'
+                          : 'border-stone-300 text-stone-600 hover:bg-stone-50'
+                    }`}
+                    type="button"
+                    onClick={() => runGuideAction(beginnerStepIds[index])}
+                  >
+                    <span className={`font-semibold ${activeBeginnerStep === beginnerStepIds[index] ? '' : darkMode ? 'text-stone-200' : 'text-stone-700'}`}>{title}</span>
+                    <br />
+                    <span>{description}</span>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -2639,7 +3695,7 @@ function App() {
               {t.working}
             </div>
           ) : activeMobileTab === 'export' ? (
-            <div className="mx-auto grid max-w-md grid-cols-[1fr_1fr_auto] gap-2">
+            <div className={`mx-auto grid max-w-md gap-2 ${beginnerMode ? 'grid-cols-2' : 'grid-cols-[1fr_1fr_auto]'}`}>
               <button
                 aria-label={t.exportPng}
                 className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-stone-600 ${
@@ -2658,13 +3714,15 @@ function App() {
               >
                 JPG
               </button>
-              <button
-                className={secondaryButtonClass}
-                type="button"
-                onClick={copyCurrentImage}
-              >
-                Copy
-              </button>
+              {!beginnerMode ? (
+                <button
+                  className={secondaryButtonClass}
+                  type="button"
+                  onClick={copyCurrentImage}
+                >
+                  Copy
+                </button>
+              ) : null}
             </div>
           ) : (
             <div className="mx-auto grid max-w-md grid-cols-[auto_1fr_auto] gap-2">
@@ -2680,17 +3738,21 @@ function App() {
                 className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition ${
                   darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
                 }`}
-                onClick={() => selectMobileTab('export')}
+                onClick={() => beginnerMode ? selectBeginnerStep('export') : selectMobileTab('export')}
                 type="button"
               >
                 {t.exportNow}
               </button>
               <button
                 className={secondaryButtonClass}
-                onClick={advanceMobileQuickFlow}
+                onClick={beginnerMode ? advanceBeginnerFlow : advanceMobileQuickFlow}
                 type="button"
               >
-                {nextQuickStep.id === activeMobileTab ? t.done : t.next}
+                {beginnerMode
+                  ? nextBeginnerCtaLabel
+                  : nextQuickStep.id === activeMobileTab
+                    ? t.done
+                    : t.next}
               </button>
             </div>
           )}

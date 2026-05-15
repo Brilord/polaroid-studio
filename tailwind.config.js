@@ -8,10 +8,10 @@ module.exports = {
         polaroid: '0 24px 60px rgba(17, 24, 39, 0.24)',
       },
       colors: {
-        paper: '#f7f3ea',
+        paper: '#fbf7ef',
         ink: '#171923',
-        accent: '#8f4f24',
-        accentSoft: '#f7e4d6',
+        accent: '#76512f',
+        accentSoft: '#f1e4d1',
       },
       fontFamily: {
         display: ['"Avenir Next"', '"Segoe UI"', 'sans-serif'],
@@ -19,7 +19,7 @@ module.exports = {
       },
       backgroundImage: {
         grain:
-          'radial-gradient(circle at 25% 20%, rgba(255,255,255,0.65), transparent 32%), radial-gradient(circle at 80% 10%, rgba(209,143,99,0.08), transparent 28%), linear-gradient(140deg, #fffaf4 0%, #f5ede2 52%, #f0e5d6 100%)',
+          'radial-gradient(circle at 25% 20%, rgba(255,255,255,0.68), transparent 32%), radial-gradient(circle at 80% 10%, rgba(154,106,58,0.06), transparent 28%), linear-gradient(140deg, #fffaf4 0%, #f7f0e7 52%, #efe4d5 100%)',
       },
       keyframes: {
         floatIn: {

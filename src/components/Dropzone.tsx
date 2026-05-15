@@ -3,6 +3,7 @@ import { DragEvent, useRef } from 'react';
 type DropzoneProps = {
   onSelectFiles: (files: FileList | null) => void;
   onOpenNativeDialog: () => void;
+  inputId?: string;
   darkMode?: boolean;
   copy?: {
     title: string;
@@ -12,13 +13,16 @@ type DropzoneProps = {
     nativePicker: string;
   };
   compact?: boolean;
+  inputOnly?: boolean;
 };
 
 export function Dropzone({
   onSelectFiles,
   onOpenNativeDialog,
+  inputId,
   darkMode = false,
   compact = false,
+  inputOnly = false,
   copy = {
     title: 'Choose photos',
     description:
@@ -37,8 +41,9 @@ export function Dropzone({
 
   const input = (
     <input
+      id={inputId}
       ref={inputRef}
-      className="hidden"
+      className="sr-only"
       type="file"
       aria-label="Image files"
       accept="image/png,image/jpeg,image/jpg,image/webp"
@@ -46,6 +51,10 @@ export function Dropzone({
       onChange={(event) => onSelectFiles(event.target.files)}
     />
   );
+
+  if (inputOnly) {
+    return input;
+  }
 
   const fullDropzone = (
     <div
@@ -69,7 +78,7 @@ export function Dropzone({
 
       <div className="mt-4 flex flex-wrap justify-center gap-3 sm:mt-5">
         <button
-          className={`rounded-full px-4 py-2 text-sm font-medium text-white transition ${
+          className={`rounded-full px-5 py-3 text-sm font-semibold text-white transition sm:px-6 ${
             darkMode ? 'bg-accent hover:bg-orange-400' : 'bg-ink hover:bg-stone-800'
           }`}
           onClick={() => inputRef.current?.click()}

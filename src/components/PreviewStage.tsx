@@ -26,6 +26,10 @@ type PreviewStageProps = {
   darkMode?: boolean;
   compact?: boolean;
   seed?: string | number;
+  splitLabels?: {
+    before: string;
+    after: string;
+  };
 };
 
 type CropDragMode = 'move' | 'resize' | 'pinch';
@@ -42,6 +46,7 @@ export function PreviewStage({
   darkMode = false,
   compact = false,
   seed = 'preview',
+  splitLabels = { before: 'Before', after: 'After' },
 }: PreviewStageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const beforeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -397,17 +402,31 @@ export function PreviewStage({
           )}
           {previewMode === 'split' ? (
             <div
-              className="absolute bottom-6 top-6 z-20 w-1 cursor-ew-resize rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.16),0_8px_20px_rgba(0,0,0,0.2)]"
+              className="absolute bottom-6 top-6 z-20 w-1 cursor-ew-resize rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.16),0_0_28px_rgba(143,79,36,0.42),0_8px_20px_rgba(0,0,0,0.2)] transition-[left] duration-75"
               style={{ left: `${split}%` }}
               onPointerDown={beginSplitDrag}
               title="Drag to compare before and after"
             >
-              <div className="absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border border-stone-200 bg-white text-center text-xs font-semibold leading-9 text-stone-600 shadow-md">
+              <div className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-stone-200 bg-white text-center text-xs font-semibold leading-10 text-stone-600 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
                 ||
               </div>
             </div>
           ) : null}
           <div className="relative flex h-full max-w-full items-center justify-center">
+            {previewMode === 'split' ? (
+              <>
+                <div className={`pointer-events-none absolute left-4 top-4 z-30 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] shadow-sm ${
+                  darkMode ? 'bg-stone-950/78 text-stone-200' : 'bg-white/82 text-stone-700'
+                }`}>
+                  {splitLabels.before}
+                </div>
+                <div className={`pointer-events-none absolute right-4 top-4 z-30 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] shadow-sm ${
+                  darkMode ? 'bg-stone-950/78 text-stone-200' : 'bg-white/82 text-stone-700'
+                }`}>
+                  {splitLabels.after}
+                </div>
+              </>
+            ) : null}
             <canvas
               ref={canvasRef}
               className={`relative h-full max-h-full max-w-full animate-floatIn touch-none object-contain drop-shadow-[0_26px_40px_rgba(32,24,18,0.14)] ${
@@ -423,6 +442,15 @@ export function PreviewStage({
               onTouchEnd={endTouchPinch}
               onTouchCancel={endTouchPinch}
             />
+            <div
+              className={`pointer-events-none absolute inset-0 z-20 rounded-[18px] transition-opacity duration-200 ${
+                dragging ? 'opacity-100' : 'opacity-0'
+              }`}
+              aria-hidden="true"
+            >
+              <div className="absolute inset-[8%] rounded-[16px] border border-white/55 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.12)]" />
+              <div className="absolute inset-[8%] rounded-[16px] bg-[linear-gradient(to_right,transparent_32%,rgba(255,255,255,0.5)_33%,rgba(255,255,255,0.5)_34%,transparent_35%,transparent_65%,rgba(255,255,255,0.5)_66%,rgba(255,255,255,0.5)_67%,transparent_68%),linear-gradient(to_bottom,transparent_32%,rgba(255,255,255,0.5)_33%,rgba(255,255,255,0.5)_34%,transparent_35%,transparent_65%,rgba(255,255,255,0.5)_66%,rgba(255,255,255,0.5)_67%,transparent_68%)]" />
+            </div>
             {(['left-2 top-2 cursor-nwse-resize sm:left-4 sm:top-4', 'right-2 top-2 cursor-nesw-resize sm:right-4 sm:top-4', 'bottom-2 left-2 cursor-nesw-resize sm:bottom-4 sm:left-4', 'bottom-2 right-2 cursor-nwse-resize sm:bottom-4 sm:right-4'] as const).map(
               (position) => (
                 <button
